@@ -126,12 +126,132 @@ struct Villa3D: NSViewRepresentable {
             e.preferredFrameRateRange = CAFrameRateRange(minimum: 20, maximum: 30, preferred: 30)
             e.add(to: .main, forMode: .common)
             enlace = e
+            // El Contralor de estructuras pide una auditoría nueva dejando trabajo/pedir-auditoria; se atiende aunque
+            // la villa no se esté dibujando (pantalla apagada o ventana tapada).
+            pedidoAuditoria?.invalidate()
+            pedidoAuditoria = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    let pedido = Almacen.carpetaLocal + "/trabajo/pedir-auditoria"
+                    guard let self, !self.oficinas.isEmpty, FileManager.default.fileExists(atPath: pedido) else { return }
+                    try? FileManager.default.removeItem(atPath: pedido); self.auditarFisica()
+                }
+            }
         }
+        private var pedidoAuditoria: Timer?
         func desconectar() { enlace?.invalidate(); enlace = nil }
 
         private var auditado = false, inicioAuditoria: CFTimeInterval = 0
         /// Recorre la ruta de cada vehículo y comprueba que su silueta no se cruce con muros, pilares, oficinas,
         /// pizarras, árboles ni arbustos (la misma grilla con que caminan los agentes). Deja un informe legible.
+        /// Letreros: cada cara grande de un cartel se mira de frente desde 1,5 m; si algo fijo se interpone (un muro,
+        /// otro edificio), el letrero está tapado o encajado en la estructura. También avisa los textos que no caben.
+        private func auditarLetreros() -> [String] {
+            let t0 = CACurrentMediaTime()
+            var porMaterial: [ObjectIdentifier: String] = [:]
+            for (m, t) in Self.carteles { porMaterial[ObjectIdentifier(m)] = t }
+            var moviles = Set(vehiculos.map { ObjectIdentifier($0.raiz) })
+            for p in personas.values { moviles.insert(ObjectIdentifier(p.raiz)) }
+            let raiz = escena.rootNode
+            func superior(_ n: SCNNode) -> SCNNode { var x = n; while let p = x.parent, p !== raiz { x = p }; return x }
+            func fijo(_ n: SCNNode) -> Bool { let s = superior(n); return !moviles.contains(ObjectIdentifier(s)) && !s.hasActions }
+            let opciones: [String: Any] = [SCNHitTestOption.searchMode.rawValue: SCNHitTestSearchMode.all.rawValue,
+                                           SCNHitTestOption.backFaceCulling.rawValue: true, SCNHitTestOption.ignoreHiddenNodes.rawValue: true]
+            var tapados: [String: (malos: Int, de: Int, centro: SIMD3<Float>, normal: SIMD3<Float>, radio: Float)] = [:], vistos = 0
+            var nodos: [SCNNode] = []
+            raiz.enumerateHierarchy { n, _ in if n.geometry != nil && !n.isHidden { nodos.append(n) } }
+            for n in nodos where fijo(n) {
+                guard let g = n.geometry, let vs = g.sources(for: .vertex).first, vs.bytesPerComponent == 4 else { continue }
+                let w = n.simdWorldTransform
+                let verts: [SIMD3<Float>] = vs.data.withUnsafeBytes { b in
+                    (0..<vs.vectorCount).map { i in
+                        let o = vs.dataOffset + i * vs.dataStride
+                        let v = SIMD4<Float>(b.load(fromByteOffset: o, as: Float.self), b.load(fromByteOffset: o + 4, as: Float.self), b.load(fromByteOffset: o + 8, as: Float.self), 1)
+                        let m = w * v; return SIMD3(m.x, m.y, m.z)
+                    }
+                }
+                for (e, el) in g.elements.enumerated() where el.primitiveType == .triangles && !g.materials.isEmpty {
+                    guard let texto = porMaterial[ObjectIdentifier(g.materials[e % g.materials.count])] else { continue }
+                    let idx: [Int] = el.data.withUnsafeBytes { b in
+                        (0..<(el.primitiveCount * 3)).map { k in
+                            el.bytesPerIndex == 2 ? Int(b.load(fromByteOffset: k * 2, as: UInt16.self)) : el.bytesPerIndex == 4 ? Int(b.load(fromByteOffset: k * 4, as: UInt32.self)) : Int(b.load(fromByteOffset: k, as: UInt8.self))
+                        }
+                    }
+                    // Cada cara rectangular (triángulos con la misma normal que comparten vértices) se revisa por separado;
+                    // un cartel de dos caras (frente y dorso) basta con que una se vea entera.
+                    var tris: [(a: SIMD3<Float>, b: SIMD3<Float>, c: SIMD3<Float>, n: SIMD3<Float>, area: Float, clave: SIMD3<Int>)] = []
+                    for k in stride(from: 0, to: idx.count - 2, by: 3) where idx[k + 2] < verts.count {
+                        let a = verts[idx[k]], b = verts[idx[k + 1]], c = verts[idx[k + 2]]
+                        let x = simd_cross(b - a, c - a), area = simd_length(x) / 2
+                        guard area > 0.005 else { continue }
+                        let nrm = x / (area * 2)
+                        tris.append((a, b, c, nrm, area, SIMD3<Int>(Int((nrm.x * 8).rounded()), Int((nrm.y * 8).rounded()), Int((nrm.z * 8).rounded()))))
+                    }
+                    var padre = Array(tris.indices)
+                    func raizUF(_ i: Int) -> Int { var i = i; while padre[i] != i { padre[i] = padre[padre[i]]; i = padre[i] }; return i }
+                    var porVertice: [SIMD4<Int>: Int] = [:]
+                    for (t, tr) in tris.enumerated() {
+                        for v in [tr.a, tr.b, tr.c] {
+                            let k = SIMD4<Int>(Int((v.x * 500).rounded()), Int((v.y * 500).rounded()), Int((v.z * 500).rounded()), tr.clave.x &* 31 &+ tr.clave.y &* 7 &+ tr.clave.z)
+                            if let o = porVertice[k] { padre[raizUF(t)] = raizUF(o) } else { porVertice[k] = t }
+                        }
+                    }
+                    var rects: [Int: (area: Float, n: SIMD3<Float>, muestras: [SIMD3<Float>])] = [:]
+                    for (t, tr) in tris.enumerated() {
+                        let cen = (tr.a + tr.b + tr.c) / 3
+                        var r = rects[raizUF(t)] ?? (0, tr.n, [])
+                        r.area += tr.area; r.muestras += [cen, tr.a + (cen - tr.a) * 0.2, tr.b + (cen - tr.b) * 0.2, tr.c + (cen - tr.c) * 0.2]
+                        rects[raizUF(t)] = r
+                    }
+                    let mayor = rects.values.map(\.area).max() ?? 0
+                    var revisadas: [(malos: Int, de: Int, centro: SIMD3<Float>, normal: SIMD3<Float>, radio: Float)] = []
+                    for r in rects.values where r.area > mayor * 0.5 {
+                        var malos = 0
+                        for p in r.muestras {      // tramo desde 1,5 m al frente hasta 3 cm antes del cartel
+                            let desde = p + r.n * 1.5, hasta = p + r.n * 0.03
+                            let hits = raiz.hitTestWithSegment(from: SCNVector3(desde.x, desde.y, desde.z), to: SCNVector3(hasta.x, hasta.y, hasta.z), options: opciones)
+                            if hits.contains(where: { h in
+                                guard !(h.node === n && h.geometryIndex == e), fijo(h.node) else { return false }
+                                // el vidrio (mamparas, ascensores) deja leer el cartel
+                                let m = h.node.geometry?.materials, mm = m.flatMap { $0.isEmpty ? nil : $0[h.geometryIndex % $0.count] }
+                                return !(mm.map { $0.transparency < 0.9 || !$0.writesToDepthBuffer } ?? false)
+                            }) { malos += 1 }
+                        }
+                        let c = r.muestras.reduce(SIMD3<Float>(0, 0, 0), +) / Float(r.muestras.count)
+                        revisadas.append((malos, r.muestras.count, c, r.n, r.muestras.map { simd_distance($0, c) }.max() ?? 1))
+                    }
+                    vistos += 1
+                    for r in revisadas where r.malos >= 2 {
+                        // su dorso (normal opuesta, a menos de 30 cm): si se ve entero, el cartel se lee por ese lado
+                        let dorso = revisadas.filter { simd_dot($0.normal, r.normal) < -0.9 && simd_distance($0.centro, r.centro) < 0.3 }.map(\.malos).min()
+                        if let d = dorso, d < 2 { continue }
+                        if (tapados[texto]?.malos ?? 0) < r.malos { tapados[texto] = r }
+                    }
+                }
+            }
+            // Foto de cada letrero tapado (para el informe del Contralor de estructuras)
+            let fotos = Almacen.carpetaLocal + "/trabajo/contralor/fotos"
+            try? FileManager.default.removeItem(atPath: fotos)
+            try? FileManager.default.createDirectory(atPath: fotos, withIntermediateDirectories: true)
+            let rnd = SCNRenderer(device: MTLCreateSystemDefaultDevice(), options: nil); rnd.scene = escena
+            let cam = SCNNode(); cam.camera = SCNCamera(); cam.camera?.fieldOfView = 50; cam.camera?.zNear = 0.1; raiz.addChildNode(cam)
+            for (texto, t) in tapados {
+                let ojo = t.centro + t.normal * max(3.5, t.radio * 2.4) + SIMD3<Float>(0, 0.4, 0)
+                cam.simdPosition = ojo; cam.simdLook(at: t.centro)
+                rnd.pointOfView = cam
+                let img = rnd.snapshot(atTime: CACurrentMediaTime(), with: CGSize(width: 900, height: 560), antialiasingMode: .multisampling4X)
+                let nombre = texto.folding(options: .diacriticInsensitive, locale: nil).replacingOccurrences(of: "[^A-Za-z0-9]+", with: "-", options: .regularExpression)
+                if let d = img.tiffRepresentation, let b = NSBitmapImageRep(data: d), let png = b.representation(using: .png, properties: [:]) {
+                    try? png.write(to: URL(fileURLWithPath: fotos + "/" + nombre + ".png"))
+                }
+            }
+            cam.removeFromParentNode()
+            var l = tapados.keys.sorted().map { "TAPADO  letrero «\($0)»: \(tapados[$0]!.malos) de \(tapados[$0]!.de) puntos de su cara tapados por algo fijo (muro, edificio o estructura) · centro (\(Int(tapados[$0]!.centro.x)), \(Int(tapados[$0]!.centro.z)))" }
+            l += Self.cartelesLargos.map { "CORTADO letrero «\($0)»: el texto no cabe ni con la letra mínima" }
+            l.append(l.isEmpty ? "OK      letreros: \(vistos) revisados, ninguno tapado ni cortado (\(Int((CACurrentMediaTime() - t0) * 1000)) ms)"
+                               : "INFO    letreros: \(vistos) revisados (\(Int((CACurrentMediaTime() - t0) * 1000)) ms)")
+            return l
+        }
+
         private func auditarFisica() {
             auditado = true
             var lineas: [String] = ["Auditoría física · \(Date())"]
@@ -227,6 +347,7 @@ struct Villa3D: NSViewRepresentable {
             for (id, p) in personas where !nav.libre(p.pos) && hypot(p.pos.x - (oficinas[id]?.silla.x ?? 0), p.pos.y - (oficinas[id]?.silla.y ?? 0)) > 0.6
                 && hypot(p.pos.x - (oficinasNube[id]?.silla.x ?? 1e6), p.pos.y - (oficinasNube[id]?.silla.y ?? 1e6)) > 0.6 { atrapados += 1; lineas.append("AVISO   \(id) parado dentro de un obstáculo") }
             lineas.append(atrapados == 0 ? "OK      agentes: ninguno dentro de un obstáculo" : "")
+            lineas += auditarLetreros()
             let ruta = Almacen.carpetaLocal + "/trabajo/auditoria-fisica.txt"
             try? lineas.joined(separator: "\n").write(toFile: ruta, atomically: true, encoding: .utf8)
             // Plano cenital a pedido (para diseñar trazados): crear trabajo/pedir-plano y reabrir la app.
@@ -331,6 +452,7 @@ struct Villa3D: NSViewRepresentable {
             montarCamiones()
             vehiculos += Islas.buses                       // buses de enlace a las islas (al final: no alteran el cupo del anillo)
             montarDefensa()
+            montarEscuadrasAntiaereas()
             estrellas = cieloEstrellado(); escena.rootNode.addChildNode(estrellas)
             actualizarCielo()
         }
@@ -1002,7 +1124,26 @@ struct Villa3D: NSViewRepresentable {
         }
 
         /// Patrulla militar: todoterreno verde oliva con techo de lona y antena.
-        private func patrulla(faro: SCNMaterial, freno: SCNMaterial) -> SCNNode {
+        private func patrulla(faro: SCNMaterial, freno: SCNMaterial, misiles: Bool = false) -> SCNNode {
+            if misiles {    // Humvee antiaéreo: torreta giratoria con dos contenedores de 4 misiles portátiles
+                let n = patrulla(faro: faro, freno: freno), oliva = Mat.pbr(NSColor(Color(hex: "#56623b")), rugosidad: 0.75, metal: 0.2)
+                let oscuro = Mat.pbr(NSColor(calibratedWhite: 0.1, alpha: 1)), punta = Mat.pbr(NSColor(Color(hex: "#d8d8d0")), rugosidad: 0.4)
+                let t = SCNNode(); t.position = SCNVector3(0, 2.0, -0.9); n.addChildNode(t)
+                cil(t, 0.5, 0.25, oliva, y: 0)
+                caja(t, 0.62, 0.6, 0.75, oliva, y: 0.45, chaflan: 0.06)
+                t.addChildNode(nodo(SCNBox(width: 0.4, height: 0.18, length: 0.05, chamferRadius: 0.02), Mat.pbr(NSColor(calibratedWhite: 0.15, alpha: 1), rugosidad: 0.05, metal: 0.8), y: 0.55, z: 0.38))
+                let alza = SCNNode(); alza.position = SCNVector3(0, 0.5, 0); t.addChildNode(alza)
+                for lado: CGFloat in [-1, 1] {
+                    caja(alza, 0.36, 0.4, 1.5, oliva, x: lado * 0.55, chaflan: 0.03)
+                    for (fx, fy) in [(-0.08, -0.09), (0.08, -0.09), (-0.08, 0.09), (0.08, 0.09)] as [(CGFloat, CGFloat)] {
+                        let b = nodo(SCNCylinder(radius: 0.06, height: 0.04), oscuro, y: fy, x: lado * 0.55 + fx, z: 0.76); b.eulerAngles.x = .pi / 2; alza.addChildNode(b)
+                        let m = nodo(SCNCone(topRadius: 0, bottomRadius: 0.045, height: 0.1), punta, y: fy, x: lado * 0.55 + fx, z: 0.74); m.eulerAngles.x = .pi / 2; alza.addChildNode(m)
+                    }
+                }
+                alza.runAction(.repeatForever(.sequence([.rotateTo(x: -0.45, y: 0, z: 0, duration: 4), .wait(duration: 3), .rotateTo(x: -0.05, y: 0, z: 0, duration: 4), .wait(duration: 5)])))
+                t.runAction(.repeatForever(.sequence([.rotateBy(x: 0, y: 1.2, z: 0, duration: 5), .wait(duration: 2), .rotateBy(x: 0, y: -2.4, z: 0, duration: 9), .wait(duration: 2), .rotateBy(x: 0, y: 1.2, z: 0, duration: 5)])))
+                return n
+            }
             if let m = Modelos.nodo("humvee", largo: 4.6) {   // Humvee con antena y baliza ámbar
                 m.addChildNode(nodo(SCNCylinder(radius: 0.02, height: 1.6), Mat.pbr(.black), y: 2.7, x: 0.7, z: -1.5))
                 let b = nodo(SCNBox(width: 0.45, height: 0.22, length: 0.28, chamferRadius: 0.05), Mat.emisivo(.systemYellow, fuerza: 1.5), y: 2.08, z: 0.3)
@@ -1240,6 +1381,8 @@ struct Villa3D: NSViewRepresentable {
             vehiculos.append(Vehiculo(ambulancia(), ruta: interior, s: 30, velocidad: 10))
             for k in 0..<2 { vehiculos.append(Vehiculo(patrulla(faro: faro, freno: freno), ruta: exterior, s: CGFloat(k) * 190 + 100, velocidad: 7)) }
             vehiculos.append(Vehiculo(patrulla(faro: faro, freno: freno), ruta: visita, s: 150, velocidad: 7))
+            let antiaereas = [Vehiculo(patrulla(faro: faro, freno: freno, misiles: true), ruta: exterior, s: 5, velocidad: 7),
+                              Vehiculo(patrulla(faro: faro, freno: freno, misiles: true), ruta: interior, s: 180, velocidad: 7)]
             // Motoristas de Carabineros patrullando ambos carriles
             vehiculos.append(Vehiculo(moto(faro: faro), ruta: exterior, s: 250, velocidad: 11))
             vehiculos.append(Vehiculo(moto(faro: faro), ruta: interior, s: 200, velocidad: 11))
@@ -1248,6 +1391,7 @@ struct Villa3D: NSViewRepresentable {
                 v.raiz.scale = SCNVector3(1, 1, 1)       // tamaño real, proporcional a las personas (1,85 m)
                 escena.rootNode.addChildNode(v.raiz)
             }
+            for v in antiaereas { v.raiz.name = "elem:ejercito"; escena.rootNode.addChildNode(v.raiz); vehiculos.append(v) }
             // Carabinero dirigiendo el tránsito en el cruce de la avenida con el anillo
             let cb = Persona.carabinero(); cb.raiz.name = "elem:carabinero"
             let pc = eje(55.6, 4.4), cruce = eje(60, 0)
@@ -1279,17 +1423,27 @@ struct Villa3D: NSViewRepresentable {
             let visibles = vehiculos.enumerated().filter { !$0.element.raiz.isHidden }
             for (i, v) in visibles {
                 var porPaciente = false                     // un camión no se atraviesa: nadie se «libera» pasando por él
-                let bloqueado = visibles.contains { (j, o) in
+                let bloqueadores = visibles.filter { (j, o) in
                     guard o !== v, estorba(v, o) else { return false }
                     if o.paciente || v.paciente { porPaciente = true }
                     return !(estorba(o, v) && i > j)        // bloqueo mutuo: el de índice mayor (más prioridad) sigue
                 }
+                let bloqueado = !bloqueadores.isEmpty
                 // Anti-atasco: si lleva 3 s detenido (cadena de esperas en el cruce o la garita), avanza 2 s
                 // sin esperar; el que más prioridad tiene se libera antes (umbral algo menor).
                 if v.liberado > 0 { v.liberado -= dt; v.detenido = false }
                 else if bloqueado {
                     v.esperando += dt; v.detenido = true
                     if !porPaciente && v.esperando > 3.0 - CGFloat(i) * 0.08 { v.liberado = 2; v.esperando = 0 }
+                    // Bloqueo en cadena circular (p. ej. tres camiones en los andenes del mall, que nunca se «liberan»):
+                    // si todos los que lo frenan también están detenidos, sigue el de mayor índice. Y nadie espera más de 20 s.
+                    else if (v.esperando > 4 && bloqueadores.allSatisfy { $0.element.detenido && $0.element.esperando > 2.5 && $0.offset < i })
+                                || v.esperando > 20 {
+                        let nota = "\(Date()) destrabado \(v.raiz.name ?? "?") tras \(Int(v.esperando)) s en (\(Int(v.pos.x)), \(Int(v.pos.y)))\n"
+                        if let h = FileHandle(forWritingAtPath: Almacen.carpetaLocal + "/trabajo/desatascos.txt") { h.seekToEndOfFile(); h.write(Data(nota.utf8)); h.closeFile() }
+                        else { try? nota.write(toFile: Almacen.carpetaLocal + "/trabajo/desatascos.txt", atomically: true, encoding: .utf8) }
+                        v.liberado = 2.5; v.esperando = 0
+                    }
                 } else { v.esperando = 0; v.detenido = false }
             }
             for (_, v) in visibles { v.paso(dt) }
@@ -1720,11 +1874,16 @@ struct Villa3D: NSViewRepresentable {
             montarZonas()
             let porZona = Dictionary(grouping: almacen.agentes, by: \.zona)
             // Ayudantes de la sede (p. ej. el Revisor de agentes): oficina en la plaza de gobierno, cerca del Alcalde.
-            for (i, a) in (porZona["sede"] ?? []).enumerated() {
+            let sede = porZona["sede"] ?? []
+            for a in sede {
                 if let p = personas[a.id] { p.actualizar(a); oficinas[a.id]?.actualizar(a); continue }
                 // Anexo de Asesoría al costado del palacio: misma orientación y fachada alineada con la del palacio.
-                // Cuatro despachos: adelante Seguridad y Revisor; atrás Hacienda y Cancillería (no se encima ninguno).
-                let pos = CGPoint(x: 10.4 * (i % 2 == 0 ? 1 : -1), y: i < 2 ? 2.3 : -1.4)
+                // Despachos en filas de a dos (3,7 m): adelante Seguridad y Revisor; luego Hacienda y Cancillería; atrás Contraloría.
+                // Puesto = primero libre (un agente nuevo que llega con el orden cambiado no cae sobre un despacho ya armado).
+                let puesto: (Int) -> CGPoint = { i in CGPoint(x: 10.4 * (i % 2 == 0 ? 1 : -1), y: 2.3 - 3.7 * CGFloat(i / 2)) }
+                let ocupados = sede.compactMap { oficinas[$0.id]?.raiz.position }
+                let i = (0...sede.count).first { k in !ocupados.contains { abs(CGFloat($0.x) - puesto(k).x) < 1 && abs(CGFloat($0.z) - puesto(k).y) < 1 } } ?? sede.count
+                let pos = puesto(i)
                 let of = Oficina(agente: a, pos: pos, yaw: 0, piso: 0.12, zona: almacen.zonas["sede"], nav: nav, asesoria: true)
                 escena.rootNode.addChildNode(of.raiz)
                 oficinas[a.id] = of
@@ -3272,9 +3431,15 @@ extension Villa3D.Coordinador {
         }
     }
 
+    /// Todos los carteles creados (para que la auditoría revise que ninguno quede tapado o con el texto cortado).
+    @MainActor static var carteles: [(SCNMaterial, String)] = [], cartelesLargos: [String] = []
+
     static func mCartel(_ texto: String, _ fondo: NSColor, ancho: CGFloat = 620, brillo: CGFloat = 0.6) -> SCNMaterial {
         let img = cartelTienda(texto, fondo, ancho: ancho)
         let m = SCNMaterial(); m.diffuse.contents = img; m.emission.contents = img; m.emission.intensity = brillo
+        carteles.append((m, texto))
+        let minimo = (texto as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 18, weight: .heavy)])
+        if minimo.width > ancho - 40 { cartelesLargos.append(texto) }       // ni con la letra mínima cabe: se cortaría
         return m
     }
 
@@ -3689,7 +3854,7 @@ extension Villa3D.Coordinador {
         rutas.append((rutaP, 30, largo(idaP + d.atras), [idaP.count - 1, idaP.count], NSColor(Color(hex: "#d68910"))))
         for r in rutas {
             let v = Vehiculo(camion(r.color, faro: faro, freno: freno), ruta: r.ruta, s: r.s, velocidad: 7, paradas: [(r.parada, 15)],
-                             reversa: r.reversa, largo: 4.8, ancho: 2.1, paciente: true)
+                             reversa: r.reversa, largo: 4.8, ancho: 1.8, paciente: true)   // 1,8: los carriles del anillo (r 59 y 61) están a 2 m
             v.raiz.scale = SCNVector3(0.75, 0.75, 0.75)   // camión de reparto liviano de 4,8 m y 2,6 m de alto: cabe en los andenes
             vehiculos.append(v)
             escena.rootNode.addChildNode(v.raiz)
@@ -3742,7 +3907,7 @@ extension Villa3D.Coordinador {
 enum Islas {
     nonisolated static let angAero: CGFloat = -1.05, rAero: CGFloat = 165, radioAero: CGFloat = 58
     nonisolated static let angDef: CGFloat = 1.1, rDef: CGFloat = 150, radioDef: CGFloat = 40          // Ejército
-    nonisolated static let angFA: CGFloat = -0.55, rFA: CGFloat = 222, radioFA: CGFloat = 32           // Fuerza Aérea (junto al aeropuerto)
+    nonisolated static let angFA: CGFloat = -0.55, rFA: CGFloat = 230, radioFA: CGFloat = 40           // Fuerza Aérea (junto al aeropuerto)
     nonisolated static let angNav: CGFloat = 0.07, rNav: CGFloat = 140, radioNav: CGFloat = 32         // Armada (junto al puerto)
     nonisolated static let angDist: CGFloat = -1.85, rDist: CGFloat = 152, radioDist: CGFloat = 48
     nonisolated static let angCaleta: CGFloat = -2.95, angBalneario: CGFloat = -2.38, angMarina: CGFloat = -2.64
@@ -4473,7 +4638,7 @@ extension Villa3D.Coordinador {
         cil(B, 6.2, 0.06, pasto, y: 0.03)                                            // patio central
         for g: CGFloat in [0, .pi / 2] { caja(B, 12, 0.07, 1.2, Mat.textura(.adoquin, repetir: 3), y: 0.04, giro: g) }
         // Rectoría con torre del reloj (al fondo, frente al acceso)
-        let R = SCNNode(); R.position = SCNVector3(0, 0, -10.5); B.addChildNode(R)
+        let R = SCNNode(); R.position = SCNVector3(0, 0, -12.3); B.addChildNode(R)
         caja(R, 6, 5, 3.6, piedra, y: 2.5)
         caja(R, 6.4, 0.4, 4.0, techo, y: 5.2)
         caja(R, 2.4, 9, 2.4, piedra, y: 9.6)
@@ -4483,7 +4648,7 @@ extension Villa3D.Coordinador {
         R.addChildNode(nodo(SCNPlane(width: 1.8, height: 1.8), reloj, y: 12.2, z: 1.22))
         caja(R, 5.6, 2.6, 0.06, ventana(), y: 2.0, z: 1.82)
         letrero(R, "UNIVERSIDAD DE LA VILLA · RECTORÍA", "#5b3a29", ancho: 5.6, alto: 0.55, y: 4.3, z: 1.86)
-        nav(0, -10.5, 3.1, 1.9)
+        nav(0, -12.3, 3.1, 1.9)
         // Facultades en anillo alrededor del patio, puertas al centro
         let facultades: [(String, String)] = [("MEDICINA", "#c0392b"), ("INGENIERÍA", "#d68910"), ("COMPUTACIÓN E IA", "#1f6fb2"), ("ECONOMÍA Y NEGOCIOS", "#196f3d"),
                                               ("DERECHO", "#7d3c98"), ("HUMANIDADES", "#a04000"), ("CIENCIAS EXACTAS", "#117a65"), ("ARQUITECTURA Y DISEÑO", "#2e4053")]
@@ -5725,6 +5890,66 @@ extension Villa3D.Coordinador {
         let p = aplanado(n, nombre); p.scale = SCNVector3(1, 1, 1); return p
     }
 
+    /// Lanzamisiles autopropulsado (proa +z, 11 × 2,6 m): camión de 4 ejes con cabina blindada, gatos estabilizadores y
+    /// una plataforma giratoria con el contenedor de `tubos` misiles (tapas rojas) que se eleva, apunta y vuelve a su cuna.
+    /// Con `radar`, lleva detrás un remolque con antena de arreglo plano que gira (batería antiaérea).
+    private func lanzamisiles(_ color: NSColor, tubos: Int, nombre: String, radar: Bool = false) -> SCNNode {
+        let raiz = SCNNode(), n = SCNNode(); raiz.name = nombre
+        let pintura = Mat.pbr(color, rugosidad: 0.62, metal: 0.25), oscuro = Mat.pbr(NSColor(calibratedWhite: 0.08, alpha: 1), rugosidad: 0.85)
+        let goma = Mat.pbr(NSColor(calibratedWhite: 0.05, alpha: 1), rugosidad: 0.95), acero = Mat.pbr(NSColor(calibratedWhite: 0.55, alpha: 1), rugosidad: 0.35, metal: 0.85)
+        let vidrioM = Mat.pbr(NSColor(Color(hex: "#18242c")), rugosidad: 0.05, metal: 0.7), tapa = Mat.pbr(NSColor(Color(hex: "#a93226")), rugosidad: 0.5)
+        caja(n, 1.2, 0.35, 10.6, oscuro, y: 0.95)                                                       // chasis
+        for z: CGFloat in [3.6, 2.0, -1.8, -3.4] { for x: CGFloat in [-1.12, 1.12] {
+            let r = nodo(SCNTube(innerRadius: 0.32, outerRadius: 0.62, height: 0.42), goma, y: 0.62, x: x, z: z); r.eulerAngles.z = .pi / 2; n.addChildNode(r)
+            let l = nodo(SCNCylinder(radius: 0.33, height: 0.36), acero, y: 0.62, x: x, z: z); l.eulerAngles.z = .pi / 2; n.addChildNode(l)
+        } }
+        for x: CGFloat in [-1, 1] { caja(n, 0.5, 0.06, 4.2, pintura, x: x * 1.12, y: 1.3, z: 0.1); caja(n, 0.5, 0.06, 2.4, pintura, x: x * 1.12, y: 1.3, z: -2.6) }
+        caja(n, 2.6, 1.9, 2.3, pintura, y: 2.05, z: 4.15, chaflan: 0.12)                              // cabina blindada
+        caja(n, 2.2, 0.6, 0.05, vidrioM, y: 2.5, z: 5.31); for x: CGFloat in [-1, 1] { caja(n, 0.05, 0.5, 0.9, vidrioM, x: x * 1.31, y: 2.5, z: 4.5) }
+        caja(n, 2.64, 0.35, 0.3, oscuro, y: 1.2, z: 5.35)
+        for x: CGFloat in [-0.85, 0.85] { caja(n, 0.3, 0.14, 0.05, Mat.emisivo(NSColor(calibratedRed: 1, green: 0.95, blue: 0.8, alpha: 1), fuerza: 0.6), x: x, y: 1.55, z: 5.33) }
+        caja(n, 2.5, 1.5, 1.6, pintura, y: 1.85, z: 2.2, chaflan: 0.06)                               // grupo electrógeno
+        for k in 0..<5 { caja(n, 2.52, 0.04, 0.08, oscuro, y: 1.4 + CGFloat(k) * 0.22, z: 1.4) }
+        caja(n, 2.5, 0.25, 6.2, pintura, y: 1.25, z: -1.6)                                             // plataforma
+        for (x, z) in [(CGFloat(-1.45), CGFloat(-4.6)), (1.45, -4.6), (-1.45, 1.2), (1.45, 1.2)] {     // gatos estabilizadores
+            caja(n, 0.5, 0.2, 0.25, oscuro, x: x * 0.85, y: 1.0, z: z); cil(n, 0.07, 0.9, acero, x: x, y: 0.55, z: z); cil(n, 0.25, 0.06, oscuro, x: x, y: 0.03, z: z)
+        }
+        let a = n.flattenedClone(); raiz.addChildNode(a)
+        // Torreta giratoria y contenedor (el pivote queda a popa: al elevarse apunta hacia proa y arriba)
+        let torre = SCNNode(); torre.position = SCNVector3(0, 1.4, -3.6); raiz.addChildNode(torre)
+        torre.addChildNode(nodo(SCNCylinder(radius: 1.0, height: 0.3), oscuro, y: 0.15))
+        let pod = SCNNode(); pod.position = SCNVector3(0, 0.55, 0); torre.addChildNode(pod)
+        let cols = tubos > 4 ? 3 : 2, filas = (tubos + cols - 1) / cols
+        let anchoP = CGFloat(cols) * 0.62 + 0.2, altoP = CGFloat(filas) * 0.62 + 0.2
+        pod.addChildNode(nodo(SCNBox(width: anchoP, height: altoP, length: 6.4, chamferRadius: 0.05), pintura, y: altoP / 2, z: 3.2))
+        for k in 0..<tubos {
+            let cx = (CGFloat(k % cols) - CGFloat(cols - 1) / 2) * 0.62, cy = 0.1 + 0.31 + CGFloat(k / cols) * 0.62
+            let t = nodo(SCNCylinder(radius: 0.25, height: 0.06), tapa, y: cy, x: cx, z: 6.42); t.eulerAngles.x = .pi / 2; pod.addChildNode(t)
+            let t2 = nodo(SCNCylinder(radius: 0.25, height: 0.06), oscuro, y: cy, x: cx, z: -0.02); t2.eulerAngles.x = .pi / 2; pod.addChildNode(t2)
+        }
+        for x: CGFloat in [-1, 1] { caja(pod, 0.08, 0.08, 6.0, acero, x: x * (anchoP / 2 + 0.05), y: altoP * 0.75, z: 3.2) }
+        let piston = SCNNode(); piston.position = SCNVector3(0, 0.3, 0); torre.addChildNode(piston)
+        // Ciclo: espera, gira la torreta, eleva el contenedor a 55°, mantiene la alerta y vuelve a la cuna
+        let e = Double.random(in: 4...30)
+        pod.runAction(.repeatForever(.sequence([.wait(duration: e + 4), .rotateTo(x: -0.96, y: 0, z: 0, duration: 7, usesShortestUnitArc: true),
+                                                .wait(duration: 22), .rotateTo(x: 0, y: 0, z: 0, duration: 7, usesShortestUnitArc: true), .wait(duration: 34 - e)])))
+        torre.runAction(.repeatForever(.sequence([.wait(duration: e), .rotateTo(x: 0, y: 0.45, z: 0, duration: 4, usesShortestUnitArc: true), .wait(duration: 29),
+                                                  .rotateTo(x: 0, y: -0.3, z: 0, duration: 5, usesShortestUnitArc: true), .wait(duration: 8),
+                                                  .rotateTo(x: 0, y: 0, z: 0, duration: 4, usesShortestUnitArc: true), .wait(duration: 24 - e)])))
+        if radar {   // remolque de radar a popa, con su barra de tiro
+            let rm = SCNNode()
+            caja(rm, 2.3, 1.2, 3.4, pintura, y: 1.3, z: -8.2, chaflan: 0.06); caja(rm, 0.15, 0.15, 1.6, oscuro, y: 0.9, z: -6.0)
+            for x: CGFloat in [-1.05, 1.05] { let r = nodo(SCNTube(innerRadius: 0.25, outerRadius: 0.5, height: 0.35), goma, y: 0.5, x: x, z: -8.6); r.eulerAngles.z = .pi / 2; rm.addChildNode(r) }
+            raiz.addChildNode(rm.flattenedClone())
+            let ant = SCNNode(); ant.position = SCNVector3(0, 1.9, -8.2); raiz.addChildNode(ant)
+            ant.addChildNode(nodo(SCNCylinder(radius: 0.1, height: 0.8), acero, y: 0.4))
+            let panel = nodo(SCNBox(width: 2.4, height: 1.6, length: 0.18, chamferRadius: 0.04), Mat.pbr(NSColor(calibratedWhite: 0.85, alpha: 1), rugosidad: 0.4), y: 1.5)
+            panel.eulerAngles.x = -0.35; ant.addChildNode(panel)
+            ant.runAction(.repeatForever(.rotateBy(x: 0, y: .pi * 2, z: 0, duration: 6)))
+        }
+        return raiz
+    }
+
     /// Militar articulado (uniforme, casco y fusil), para formar y marchar con zancada real.
     private func militar(_ uniforme: NSColor, casco: NSColor, piel: NSColor) -> PersonaPlaya {
         let p = personaPlaya(mujer: false, edad: .adulto, piel: piel, traje: uniforme, pelo: NSColor(calibratedWhite: 0.1, alpha: 1), ropa: true)
@@ -5733,6 +5958,39 @@ extension Villa3D.Coordinador {
         p.brazos[1].addChildNode(fusil)
         for k in [0, 1] { p.piernas[k].addChildNode(nodo(SCNBox(width: 0.12, height: 0.12, length: 0.26, chamferRadius: 0.03), Mat.pbr(NSColor(calibratedWhite: 0.08, alpha: 1)), y: -0.92, z: 0.05)) }
         return p
+    }
+
+    /// Escuadras antiaéreas a pie: tres soldados con lanzamisiles portátiles al hombro recorren la villa por caminos libres.
+    func montarEscuadrasAntiaereas() {
+        let verde = NSColor(Color(hex: "#4b5a33")), casco = NSColor(Color(hex: "#3d4630")), caras = pieles()
+        let tubo = Mat.pbr(NSColor(Color(hex: "#5a6b3a")), rugosidad: 0.7), negro = Mat.pbr(NSColor(calibratedWhite: 0.1, alpha: 1))
+        for (e, angs) in [[0.4, 1.9, 3.4, 4.9], [2.7, 4.2, 5.7, 1.0]].enumerated() {
+            let pts = angs.map { a in nav.cercanaLibre(CGPoint(x: sin(a) * 50, y: cos(a) * 50)) }
+            var camino: [CGPoint] = []
+            for k in 0..<pts.count { camino += nav.ruta(pts[k], pts[(k + 1) % pts.count]) }
+            guard camino.count > 3 else { continue }
+            var acciones: [SCNAction] = []
+            for k in 0..<camino.count {
+                let a = camino[k], b = camino[(k + 1) % camino.count], d = hypot(b.x - a.x, b.y - a.y)
+                guard d > 0.05 else { continue }
+                acciones.append(.rotateTo(x: 0, y: atan2(b.x - a.x, b.y - a.y), z: 0, duration: 0.25, usesShortestUnitArc: true))
+                acciones.append(.move(to: SCNVector3(b.x, 0.04, b.y), duration: Double(d / 1.3)))
+            }
+            for s in 0..<3 {
+                let p = militar(verde, casco: casco, piel: caras[(e * 3 + s) % caras.count])
+                // Lanzamisiles portátil al hombro derecho: tubo con tapas, mira y empuñadura
+                let l = SCNNode(); l.position = SCNVector3(0.2, 1.52, 0.05); p.raiz.addChildNode(l)
+                let c = nodo(SCNCylinder(radius: 0.055, height: 1.55), tubo, y: 0); c.eulerAngles.x = .pi / 2; l.addChildNode(c)
+                for z: CGFloat in [-0.78, 0.78] { let t = nodo(SCNCylinder(radius: 0.07, height: 0.08), negro, y: 0, z: z); t.eulerAngles.x = .pi / 2; l.addChildNode(t) }
+                caja(l, 0.06, 0.1, 0.22, negro, x: -0.08, y: 0.08, z: 0.25)
+                caja(l, 0.04, 0.16, 0.06, negro, y: -0.12, z: 0.12)
+                p.raiz.name = "elem:ejercito"
+                p.raiz.position = SCNVector3(camino[0].x, 0.04, camino[0].y)
+                caminar(p, ciclo: 0.9, amplitud: 0.35)
+                p.raiz.runAction(.sequence([.wait(duration: Double(s) * 1.6), .repeatForever(.sequence(acciones))]))
+                escena.rootNode.addChildNode(p.raiz)
+            }
+        }
     }
 
     private func pieles() -> [NSColor] { ["#f1c9a5", "#d9a47c", "#a8714d", "#7a4e33", "#c68e6a"].map { NSColor(Color(hex: $0)) } }
@@ -5782,6 +6040,12 @@ extension Villa3D.Coordinador {
         for (k, x) in [CGFloat(0), 4.2, 8.4].enumerated() { let t = tanque(); let p = Islas.def(x, 10); t.position = SCNVector3(p.x, 0.04, p.y); t.eulerAngles.y = Islas.angDef + .pi; escena.rootNode.addChildNode(t); _ = k }
         for x: CGFloat in [12.6, 16.8] { let c = camionMilitar(); let p = Islas.def(x, 10); c.position = SCNVector3(p.x, 0.04, p.y); c.eulerAngles.y = Islas.angDef + .pi; escena.rootNode.addChildNode(c) }
         for x: CGFloat in [21, 24] { let j = jeep(); let p = Islas.def(x, 10.8); j.position = SCNVector3(p.x, 0.04, p.y); j.eulerAngles.y = Islas.angDef + .pi; escena.rootNode.addChildNode(j) }
+        // Batería de misiles del Regimiento: dos lanzadores entre los cuarteles y el polígono, apuntando al mar
+        for x: CGFloat in [-23, -15] {
+            let l = lanzamisiles(NSColor(Color(hex: "#56623b")), tubos: 6, nombre: "elem:ejercito"); let p = Islas.def(x, 8.5)
+            l.position = SCNVector3(p.x, 0.04, p.y); l.eulerAngles.y = Islas.angDef; escena.rootNode.addChildNode(l)
+            nav.rect(p.x, p.y, 1.5, 6.0, Islas.angDef)
+        }
         // Sección que marcha por el patio, con zancada y braceo; guardias en el acceso
         let seccion = SCNNode(); var caras = pieles()
         for f in 0..<3 { for c in 0..<4 {
@@ -5865,6 +6129,12 @@ extension Villa3D.Coordinador {
         navL(4, -22, 4.7, 2.7)
         escena.rootNode.addChildNode(aplanado(F, "elem:fach"))
         F.removeFromParentNode()
+        // Batería antiaérea (4 misiles y radar remolcado) en el fondo de la base, lejos del camino del puente
+        do {
+            let l = lanzamisiles(NSColor(Color(hex: "#8d98a3")), tubos: 4, nombre: "elem:fach", radar: true); let p = Islas.fa(6, -31)
+            l.position = SCNVector3(p.x, 0.04, p.y); l.eulerAngles.y = Islas.angFA + .pi / 2; escena.rootNode.addChildNode(l)
+            let c = Islas.fa(3.5, -31); nav.rect(c.x, c.y, 8.2, 1.5, Islas.angFA)
+        }
         // Cazas: dos salen de sus refugios, despegan, patrullan sobre el mar y vuelven; uno en alerta en la plataforma
         let grisFA = NSColor(Color(hex: "#8d98a3"))
         for (k, xr) in [CGFloat(-6), 4, 14].enumerated() {
@@ -5924,6 +6194,12 @@ extension Villa3D.Coordinador {
             let b = buqueGuerra(L, submarino: sub)
             let p = Islas.naval(xb, 40); b.position = SCNVector3(p.x, -0.5, p.y); b.eulerAngles.y = Islas.angNav
             escena.rootNode.addChildNode(b)
+        }
+        // Defensa costera: dos lanzadores de misiles antibuque a los costados de la explanada, mirando al mar
+        for x: CGFloat in [-22, 22] {
+            let l = lanzamisiles(NSColor(Color(hex: "#5d6d7e")), tubos: 4, nombre: "elem:armada"); let p = Islas.naval(x, -1)
+            l.position = SCNVector3(p.x, 0.04, p.y); l.eulerAngles.y = Islas.angNav; escena.rootNode.addChildNode(l)
+            nav.rect(p.x, p.y, 1.5, 6.0, Islas.angNav)
         }
         // Infantes de marina de guardia y camión de la Armada que va y viene del puerto
         var caras = pieles()

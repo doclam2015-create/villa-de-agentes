@@ -103,3 +103,14 @@ github.com
   - Git operations protocol: https
   - Token: gho_************************************
   - Token scopes: 'gist', 'read:org', 'repo', 'workflow'
+[main 632e4c0] Metro circular, Isla de Energía con humo de partículas, vehículos de servicio y excavadora detallados
+ 13 files changed, 4313 insertions(+), 471 deletions(-)
+ create mode 100644 mac/Metro.swift
+ create mode 100644 mac/Modelos.swift
+ create mode 100644 mac/Plano.swift
+ create mode 100644 publicar.log
+To https://github.com/doclam2015-create/villa-de-agentes.git
+   8063339..632e4c0  main -> main
+branch 'main' set up to track 'origin/main'.
+https://github.com/doclam2015-create/villa-de-agentes
+PUBLICADO

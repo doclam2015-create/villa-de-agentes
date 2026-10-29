@@ -65,6 +65,8 @@ final class PuertoYFlota {
     nonisolated static let abreKelvin: CGFloat = tan(19.47 * .pi / 180)     // ángulo de Kelvin: toda estela se abre así
     private static var cacheEspuma: CGImage?
     private var portaaviones = SCNNode(), escoltas: [(n: SCNNode, lat: CGFloat, fwd: CGFloat)] = []
+    /// Otros grupos de batalla: portaaviones con su destructor, cada uno con su propio derrotero elíptico mar adentro.
+    private var grupos: [(pa: SCNNode, escolta: SCNNode, ang: CGFloat, r: CGFloat, fase: CGFloat)] = []
     private var fase: CGFloat = 0, radioFlota: CGFloat = 200, rumboFlota: CGFloat = 0
     private var ultimoEstado: CFTimeInterval = 0
 
@@ -522,7 +524,9 @@ final class PuertoYFlota {
 
     // MARK: Flota
 
-    private func montarFlota() {
+    /// Portaaviones (proa +z): casco, cubierta de vuelo en ángulo, isla con radar giratorio, aviones en cubierta y rótulo.
+    private func armarPortaaviones(_ nombre: String) -> SCNNode {
+        let pa = SCNNode()
         // Portaaviones (proa +z): casco, cubierta de vuelo en ángulo, isla con radar, aviones y estela
         let b = SCNNode()
         b.addChildNode(casco(largo: 56, manga: 9, alto: 5, proa: 11, gris, y: 0.5))
@@ -556,13 +560,34 @@ final class PuertoYFlota {
             b.addChildNode(j)
         }
         Villa3D.Coordinador.hornear(b)
-        portaaviones.addChildNode(b.flattenedClone())
+        pa.addChildNode(b.flattenedClone())
         let radar = SCNNode(); radar.position = SCNVector3(6.2, 10.2, -1.6)
         radar.addChildNode(nodo(SCNBox(width: 2.4, height: 0.9, length: 0.1, chamferRadius: 0.02), acero))
         radar.runAction(.repeatForever(.rotateBy(x: 0, y: .pi * 2, z: 0, duration: 4)))
-        portaaviones.addChildNode(radar)
-        portaaviones.addChildNode(etiqueta("Portaaviones Defensor", y: 18, grande: false, icono: "shield.lefthalf.filled", color: .systemBlue))
-        portaaviones.name = "elem:flota-portaaviones"
+        pa.addChildNode(radar)
+        pa.addChildNode(etiqueta(nombre, y: 18, grande: false, icono: "shield.lefthalf.filled", color: .systemBlue))
+        pa.name = "elem:flota-portaaviones"
+        escena.rootNode.addChildNode(portaaviones)
+        return pa
+    }
+
+    /// Destructor de escolta de los otros grupos de batalla (modelo descargado o dibujado).
+    private func destructor() -> SCNNode {
+        let n = SCNNode(), c = SCNNode()
+        if let m = Modelos.nodo("buque", largo: 22) { m.childNodes[0].position.y = -0.44; c.addChildNode(m) } else {
+            c.addChildNode(casco(largo: 22, manga: 3.6, alto: 3, proa: 6, gris, y: 0))
+            c.addChildNode(casco(largo: 22.1, manga: 3.7, alto: 0.4, proa: 6, rojo, y: -1.3))
+            c.addChildNode(nodo(SCNBox(width: 2.8, height: 2.4, length: 6.5, chamferRadius: 0.05), gris, y: 2.7, z: -1.5))
+            c.addChildNode(nodo(SCNBox(width: 2.4, height: 1.2, length: 3, chamferRadius: 0.05), gris, y: 4.5, z: 0.4))
+            c.addChildNode(nodo(SCNBox(width: 1.1, height: 1.6, length: 1.4, chamferRadius: 0.1), grisOscuro, y: 4.4, z: -3.6))
+            c.addChildNode(nodo(SCNCylinder(radius: 0.08, height: 4.4), acero, y: 6.6, z: -0.9))
+        }
+        Villa3D.Coordinador.hornear(c); n.addChildNode(c.flattenedClone()); n.name = "elem:flota-portaaviones"
+        return n
+    }
+
+    private func montarFlota() {
+        portaaviones = armarPortaaviones("Portaaviones Defensor")
         escena.rootNode.addChildNode(portaaviones)
         estelaDe(portaaviones, manga: 9, largo: 90, popa: -28)
         // Escolta: cada buque es un agente protector u optimizador
@@ -613,13 +638,26 @@ final class PuertoYFlota {
             estelaDe(n, manga: e.sub ? 2.6 : 3.6, largo: e.sub ? 22 : 36, popa: e.sub ? -9 : -11)
             escoltas.append((n, e.lat, e.fwd))
         }
-        for n in [portaaviones] + escoltas.map(\.n) { n.enumerateHierarchy { x, _ in x.castsShadow = false } }
+        // Otros dos grupos de batalla patrullan mar adentro, en sectores libres de islas (entre la Armada y el Regimiento,
+        // y entre la isla Distrito y el Balneario)
+        for (k, (nombre, ang)) in [("Portaaviones Centinela", CGFloat(0.55)), ("Portaaviones Vigía Austral", -2.42)].enumerated() {
+            let pa = armarPortaaviones(nombre), es = destructor()
+            escena.rootNode.addChildNode(pa); escena.rootNode.addChildNode(es)
+            estelaDe(pa, manga: 9, largo: 90, popa: -28); estelaDe(es, manga: 3.6, largo: 36, popa: -11)
+            // Ya en su sector desde el primer cuadro (si no, aparecían un instante en el centro de la villa)
+            pa.position = SCNVector3(sin(ang) * 235, -0.2, cos(ang) * 235)
+            es.position = SCNVector3(sin(ang) * 235 - cos(ang) * 60, -0.1, cos(ang) * 235 + sin(ang) * 60)
+            grupos.append((pa, es, ang, 235, CGFloat(k) * 2.4))
+        }
+        for n in ([portaaviones] + escoltas.map(\.n) + grupos.map(\.pa) + grupos.map(\.escolta) as [SCNNode]) { n.enumerateHierarchy { x, _ in x.castsShadow = false } }
         lancha.enumerateHierarchy { x, _ in x.castsShadow = false }
     }
 
     /// Barco más cercano a un punto del mar (los barcos se mueven: el clic no necesita ser exacto).
     func cercano(_ p: SCNVector3) -> SCNNode? {
-        let lista: [(SCNNode, CGFloat)] = [(portaaviones, 30)] + escoltas.map { ($0.n, 13) } + [(lancha, 5)]
+        var lista: [(SCNNode, CGFloat)] = [(portaaviones, 30), (lancha, 5)]
+        for e in escoltas { lista.append((e.n, 13)) }
+        for g in grupos { lista.append((g.pa, 30)); lista.append((g.escolta, 13)) }
         return lista.map { ($0.0, hypot($0.0.position.x - p.x, $0.0.position.z - p.z) / $0.1) }
             .filter { $0.1 < 1 }.min { $0.1 < $1.1 }?.0
     }
@@ -670,6 +708,18 @@ final class PuertoYFlota {
             e.n.position = SCNVector3(q.p.x, -0.1 + sin(t * 0.9 + CGFloat(k)) * 0.08, q.p.y)
             // escora hacia fuera de la curva, proporcional a cuánto vira
             e.n.eulerAngles = SCNVector3(0, CGFloat(e.n.eulerAngles.y) + giro, sin(t * 0.8 + CGFloat(k)) * 0.02 - max(-0.05, min(0.05, giro / max(dt, 0.001) * 0.15)))
+        }
+        // Otros grupos: misma elipse (55 × 40 m) en su sector; el destructor navega 60 m a popa y 18 m a babor
+        for k in grupos.indices {
+            let g = grupos[k], Tg = CGPoint(x: cos(g.ang), y: -sin(g.ang)), Rg = CGPoint(x: sin(g.ang), y: cos(g.ang))
+            func pt(_ f: CGFloat) -> CGPoint { CGPoint(x: Rg.x * g.r + Tg.x * A * cos(f) + Rg.x * B * sin(f), y: Rg.y * g.r + Tg.y * A * cos(f) + Rg.y * B * sin(f)) }
+            func tg(_ f: CGFloat) -> CGPoint { CGPoint(x: -Tg.x * A * sin(f) + Rg.x * B * cos(f), y: -Tg.y * A * sin(f) + Rg.y * B * cos(f)) }
+            let d0 = tg(g.fase); grupos[k].fase += dt * 1.0 / max(1, hypot(d0.x, d0.y))
+            for (n, fwd, lat, y) in [(g.pa, CGFloat(0), CGFloat(0), CGFloat(-0.2)), (g.escolta, -60, -18, -0.1)] {
+                let d = tg(grupos[k].fase), f = grupos[k].fase + fwd / max(1, hypot(d.x, d.y)), c = pt(f), dd = tg(f), rb = atan2(dd.x, dd.y)
+                n.position = SCNVector3(c.x + cos(rb) * lat, y + sin(t * 0.7 + CGFloat(k)) * 0.06, c.y - sin(rb) * lat)
+                n.eulerAngles = SCNVector3(0, rb, sin(t * 0.5 + CGFloat(k)) * 0.008)
+            }
         }
         // Lancha correo: recorre su circuito; frena antes de cada parada, arranca suave, sale del amarre en marcha
         // atrás y vira solo cuando está detenida en agua abierta (así nunca barre el muelle con la proa o la popa).

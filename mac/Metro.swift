@@ -34,10 +34,27 @@ final class MetroVilla {
     nonisolated static func ang(_ g: CGFloat) -> CGFloat { g * .pi / 180 }
     nonisolated static func posicion(_ k: Int) -> CGPoint { Islas.polar(radio, ang(estaciones[k].grados)) }
 
-    /// Ramal a las cocheras (sale de la vía exterior) y su nave sobre el mar (+z local hacia afuera).
-    nonisolated static let angCocheras: CGFloat = ang(175.5), rCocheras: CGFloat = 120
-    nonisolated static let ramalCtrl: [CGPoint] = [Islas.polar(83.9, ang(162)), Islas.polar(84.2, ang(166)), Islas.polar(88.5, ang(171.5)),
-                                                   Islas.polar(98, angCocheras), Islas.polar(112, angCocheras), Islas.polar(146, angCocheras)]
+    /// Ramal a las cocheras y su nave sobre el mar (+z local hacia afuera). El ramal sale tangente de la vía exterior
+    /// (r 83,9) a los 162°, justo después del andén de «Isla de Energía», describe un arco de 25 m de radio (el mayor que
+    /// cabe antes de la Caleta; antes tenía tramos de 11 m) y entra recto y radial a la nave. Puntos cada ~1 m.
+    nonisolated static let angCocheras: CGFloat = ang(175.5), rCocheras: CGFloat = 129, radioRamal: CGFloat = 25
+    nonisolated static let ramalCtrl: [CGPoint] = {
+        let r0: CGFloat = 83.9, phi = angCocheras - ang(162), rho = radioRamal
+        let u = CGPoint(x: sin(angCocheras), y: cos(angCocheras)), w = CGPoint(x: cos(angCocheras), y: -sin(angCocheras))
+        func mundo(_ a: CGFloat, _ b: CGFloat) -> CGPoint { CGPoint(x: u.x * a + w.x * b, y: u.y * a + w.y * b) }
+        // marco (a: radial por las cocheras, b: tangente hacia ángulos mayores); recta de desvío, arco y recta radial
+        let largoDesvio = max(0, (r0 * sin(phi) + rho * sin(phi) - rho) / cos(phi))
+        var pts = [mundo(r0 * cos(phi), -r0 * sin(phi))]
+        let p1 = (a: r0 * cos(phi) + largoDesvio * sin(phi), b: -r0 * sin(phi) + largoDesvio * cos(phi))
+        if largoDesvio > 0.2 { pts.append(mundo(p1.a, p1.b)) }
+        let c = (a: p1.a + rho * cos(phi), b: p1.b - rho * sin(phi)), giro = .pi / 2 - phi
+        let n = Int(rho * giro)
+        for k in 1...n { let q = phi + giro * CGFloat(k) / CGFloat(n); pts.append(mundo(c.a - rho * cos(q), c.b + rho * sin(q))) }
+        var r = c.a + 1
+        while r < rCocheras + 26 { pts.append(mundo(r, 0)); r += 1 }
+        pts.append(mundo(rCocheras + 26, 0))
+        return pts
+    }()
     nonisolated static var centroCocheras: CGPoint { Islas.polar(rCocheras + 3, angCocheras) }
 
     /// Sin árboles bajo el viaducto ni en las cocheras.
@@ -104,20 +121,7 @@ final class MetroVilla {
         var anillo = Via(); anillo.cerrada = true
         let n = Int(2 * .pi * MetroVilla.radio)
         for i in 0...n { anillo.pts.append(Islas.polar(MetroVilla.radio, 2 * .pi * CGFloat(i) / CGFloat(n))) }
-        var ramal = Via()
-        let c = MetroVilla.ramalCtrl
-        for k in 0..<(c.count - 1) {
-            let p0 = c[max(k - 1, 0)], p1 = c[k], p2 = c[k + 1], p3 = c[min(k + 2, c.count - 1)]
-            let m = max(4, Int(hypot(p2.x - p1.x, p2.y - p1.y)))
-            for j in 0..<m {
-                let t = CGFloat(j) / CGFloat(m), t2 = t * t, t3 = t2 * t
-                func f(_ a: CGFloat, _ b: CGFloat, _ cc: CGFloat, _ d: CGFloat) -> CGFloat {
-                    0.5 * (2 * b + (-a + cc) * t + (2 * a - 5 * b + 4 * cc - d) * t2 + (-a + 3 * b - 3 * cc + d) * t3)
-                }
-                ramal.pts.append(CGPoint(x: f(p0.x, p1.x, p2.x, p3.x), y: f(p0.y, p1.y, p2.y, p3.y)))
-            }
-        }
-        ramal.pts.append(c[c.count - 1])
+        var ramal = Via(); ramal.pts = MetroVilla.ramalCtrl
         for i in [0, 1] {
             var v = i == 0 ? anillo : ramal
             v.s = [0]
@@ -178,9 +182,10 @@ final class MetroVilla {
         let cobre = Mat.pbr(NSColor(calibratedRed: 0.45, green: 0.3, blue: 0.2, alpha: 1), rugosidad: 0.4, metal: 0.8)
         let poste = Mat.pbr(NSColor(calibratedWhite: 0.45, alpha: 1), rugosidad: 0.5, metal: 0.6)
         let R = MetroVilla.riel, ev = MetroVilla.entreVias
+        var curva: CGFloat = 0       // giro (rad) entre dovelas contiguas: alarga cada pieza para cerrar la cuña del lado exterior
         func caja(_ w: CGFloat, _ h: CGFloat, _ l: CGFloat, _ m: SCNMaterial, _ p: CGPoint, _ t: CGPoint, lat: CGFloat, y: CGFloat) {
             let n = normal(t), q = CGPoint(x: p.x + n.x * lat, y: p.y + n.y * lat)
-            let b = nodo(SCNBox(width: w, height: h, length: l, chamferRadius: 0), m, y: y, x: q.x, z: q.y)
+            let b = nodo(SCNBox(width: w, height: h, length: l + (abs(lat) + w / 2) * curva, chamferRadius: 0), m, y: y, x: q.x, z: q.y)
             b.eulerAngles.y = atan2(t.x, t.y); r.addChildNode(b)
         }
         func enEstacion(_ d: CGFloat) -> Bool {
@@ -189,11 +194,12 @@ final class MetroVilla {
         }
         let finLosa = MetroVilla.rCocheras - 24 + 0.5
         let inicioRamal = vias[1].s[vias[1].pts.firstIndex { hypot($0.x, $0.y) > 85.8 } ?? 0]
-        // Viaducto (Línea Circular y ramal) por dovelas de 3 m: cajón, losa, vía en placa, rieles y pretiles
+        // Viaducto (Línea Circular y ramal) por dovelas de 3 m (1 m en el ramal, que es curvo): cajón, losa, vía en placa,
+        // rieles y pretiles; cada pieza se alarga lo justo para que no queden quiebres en la curva
         for v in 0..<2 {
             let L = vias[v].largo, A = MetroVilla.largoAnden
             let bordes = v == 0 ? paradas.flatMap { [$0 - A / 2, $0 + A / 2].map { ($0 + L).truncatingRemainder(dividingBy: L) } } : []
-            var cortes = Array(stride(from: 0 as CGFloat, to: L, by: 3)).filter { c in !bordes.contains { abs($0 - c) < 0.8 } } + bordes
+            var cortes = Array(stride(from: 0 as CGFloat, to: L, by: v == 0 ? 3 : 1)).filter { c in !bordes.contains { abs($0 - c) < 0.8 } } + bordes
             cortes.sort(); cortes.append(L)
             for i in 0..<(cortes.count - 1) {
                 let d = cortes[i], d1 = cortes[i + 1]
@@ -201,6 +207,8 @@ final class MetroVilla {
                 let a = eje(v, d).p, b = eje(v, d1).p
                 let m = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2), len = hypot(b.x - a.x, b.y - a.y)
                 let t = CGPoint(x: (b.x - a.x) / max(len, 0.001), y: (b.y - a.y) / max(len, 0.001)), l = len + 0.06
+                let ta = eje(v, d - 0.5).t, tb = eje(v, d1 + 0.5).t
+                curva = abs(atan2(ta.x * tb.y - ta.y * tb.x, ta.x * tb.x + ta.y * tb.y)) / 2
                 if v == 0 {
                     let est = enEstacion((d + d1) / 2), grados = atan2(m.x, m.y) * 180 / .pi
                     caja(4.4, 1.7, l, hormigon, m, t, lat: 0, y: R - 1.45)                 // cajón pretensado
@@ -222,6 +230,7 @@ final class MetroVilla {
                 }
             }
         }
+        curva = 0
         // Catenaria de la Línea Circular: postes centrales cada ~18 m, ménsulas e hilo de contacto
         do {
             let L = vias[0].largo, pasos = Int(L / 18)
@@ -757,9 +766,12 @@ final class MetroVilla {
         let paso = MetroVilla.pasoCoche
         for (k, c) in tren.coches.enumerated() {
             let off: CGFloat = k == 0 ? paso / 2 : -paso / 2
-            let (p, t) = eje(tren.via, tren.s + off), n = normal(t)
-            c.position = SCNVector3(p.x + n.x * tren.lat, MetroVilla.riel + 0.145, p.y + n.y * tren.lat)
-            c.eulerAngles.y = atan2(t.x, t.y) + (k == 0 ? 0 : .pi)
+            // Cada coche se apoya en sus dos bogies (±4,8 m) sobre la vía: en curva la caja sigue la cuerda entre ellos y
+            // dos coches contiguos no se montan.
+            func bogie(_ d: CGFloat) -> CGPoint { let (p, t) = eje(tren.via, d), n = normal(t); return CGPoint(x: p.x + n.x * tren.lat, y: p.y + n.y * tren.lat) }
+            let a = bogie(tren.s + off + 4.8), b = bogie(tren.s + off - 4.8)
+            c.position = SCNVector3((a.x + b.x) / 2, MetroVilla.riel + 0.145, (a.y + b.y) / 2)
+            c.eulerAngles.y = atan2(a.x - b.x, a.y - b.y) + (k == 0 ? 0 : .pi)
             // Puertas del lado del andén: el de la vía en uso queda al +x local del coche que va adelante
             let ladoAnden: CGFloat = ((tren.dir > 0) == (k == 0)) ? 1 : -1
             for h in tren.puertas[k] {
