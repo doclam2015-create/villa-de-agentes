@@ -10,7 +10,7 @@ import AppKit
 struct Villa3D: NSViewRepresentable {
     @ObservedObject var almacen: Almacen
 
-    func makeCoordinator() -> Coordinador { Coordinador(almacen: almacen) }
+    func makeCoordinator() -> Coordinador { ControlVilla.shared.villaViva(almacen) }
 
     func makeNSView(context: Context) -> SCNView {
         let v = VistaVilla()
@@ -136,8 +136,35 @@ struct Villa3D: NSViewRepresentable {
                     try? FileManager.default.removeItem(atPath: pedido); self.auditarFisica()
                 }
             }
+            // Foto a pedido (revisar un edificio de cerca sin mover la cámara): trabajo/pedir-foto con
+            // «elem:nombre dx dy dz» (cámara desplazada desde el centro de ese elemento) o «ox oy oz tx ty tz» (mundo).
+            pedidoFoto?.invalidate()
+            pedidoFoto = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    let pedido = Almacen.carpetaLocal + "/trabajo/pedir-foto"
+                    guard let self, let t = try? String(contentsOfFile: pedido, encoding: .utf8) else { return }
+                    try? FileManager.default.removeItem(atPath: pedido)
+                    let p = t.split(whereSeparator: { $0 == " " || $0 == "\n" }).map(String.init)
+                    var ojo = SIMD3<Float>(0, 40, 60), mira = SIMD3<Float>(0, 0, 0)
+                    if let n = p.first, n.hasPrefix("elem:"), p.count >= 4, let e = self.escena.rootNode.childNode(withName: n, recursively: true) {
+                        let (mn, mx) = e.boundingBox, c = e.simdConvertPosition(SIMD3<Float>((Float(mn.x) + Float(mx.x)) / 2, (Float(mn.y) + Float(mx.y)) / 2, (Float(mn.z) + Float(mx.z)) / 2), to: nil)
+                        mira = c; ojo = c + SIMD3<Float>(Float(p[1]) ?? 20, Float(p[2]) ?? 10, Float(p[3]) ?? 20)
+                        if p.count >= 7 { mira = c + SIMD3<Float>(Float(p[4]) ?? 0, Float(p[5]) ?? 0, Float(p[6]) ?? 0) }
+                    } else if p.count >= 6 {
+                        let v = p.compactMap { Float($0) }; ojo = SIMD3(v[0], v[1], v[2]); mira = SIMD3(v[3], v[4], v[5])
+                    }
+                    let rnd = SCNRenderer(device: MTLCreateSystemDefaultDevice(), options: nil); rnd.scene = self.escena
+                    let cam = SCNNode(); cam.camera = SCNCamera(); cam.camera?.fieldOfView = 45; cam.camera?.zNear = 0.1
+                    self.escena.rootNode.addChildNode(cam); cam.simdPosition = ojo; cam.simdLook(at: mira); rnd.pointOfView = cam
+                    let img = rnd.snapshot(atTime: CACurrentMediaTime(), with: CGSize(width: 1400, height: 900), antialiasingMode: .multisampling4X)
+                    cam.removeFromParentNode()
+                    if let d = img.tiffRepresentation, let b = NSBitmapImageRep(data: d), let png = b.representation(using: .png, properties: [:]) {
+                        try? png.write(to: URL(fileURLWithPath: Almacen.carpetaLocal + "/trabajo/foto.png"))
+                    }
+                }
+            }
         }
-        private var pedidoAuditoria: Timer?
+        private var pedidoAuditoria: Timer?, pedidoFoto: Timer?
         func desconectar() { enlace?.invalidate(); enlace = nil }
 
         private var auditado = false, inicioAuditoria: CFTimeInterval = 0
@@ -2214,6 +2241,15 @@ struct Villa3D: NSViewRepresentable {
         }
 
         /// Vista frontal: de cara a la puerta, se ve el interior, el escritorio y la pizarra.
+        /// Desde dónde mirar la oficina de un agente sin que otro edificio la tape (vista del lugar en Barrios).
+        func vistaLugar(_ id: String) -> (ojo: SCNVector3, mira: SCNVector3)? {
+            guard let o = oficinas[id] else { return nil }
+            let p = enOficina(o, -1.1, 1.1, 1.6), d: CGFloat = 16
+            let (g, i) = vistaDespejada(p, distancia: d, inclinacion: 0.5, giro: CGFloat(o.raiz.eulerAngles.y))
+            let h = cos(i) * d
+            return (SCNVector3(p.x + sin(g) * h, p.y + sin(i) * d, p.z + cos(g) * h), p)
+        }
+
         func enfocarAgente(_ id: String) {
             guard let o = oficinas[id] else { return }
             techos(nil)
@@ -6959,13 +6995,59 @@ extension Villa3D.Coordinador {
         let I = marco()
         let pi2 = polE(38, -145), gi = CGFloat(-145) * .pi / 180
         let ib = SCNNode(); ib.position = SCNVector3(pi2.x, 0, pi2.z); ib.eulerAngles.y = gi; I.addChildNode(ib)
-        caja(ib, 5.5, 11, 4.6, vidrio); caja(ib, 5.7, 0.4, 4.8, gris, y: 11.2)
-        for k in 1..<6 { caja(ib, 5.56, 0.08, 4.66, gris, y: CGFloat(k) * 1.85) }                    // losas entre pisos
-        for (dx, dz) in [(CGFloat(-1.6), CGFloat(-1.2)), (0, -1.2), (1.6, -1.2), (-1.6, 1.0), (0, 1.0)] {
-            caja(ib, 1.3, 0.7, 1.6, blanco, x: dx, y: 11.75, z: dz)
-            ib.addChildNode(nodo(SCNCylinder(radius: 0.45, height: 0.06), oscuro, y: 12.12, x: dx, z: dz))
+        // Torre corporativa: zócalo de piedra con hall vidriado y marquesina, muro cortina de vidrio reflectante con
+        // montantes de aluminio cada 0,9 m y franjas de antepecho por piso, y azotea con parapeto y celosía que oculta los equipos.
+        let piedraI = Mat.textura(.marmol, repetir: 2, tinte: "#8d8a84"), aluminio = Mat.pbr(NSColor(Color(hex: "#b8bec4")), rugosidad: 0.28, metal: 0.9)
+        let antepecho = Mat.pbr(NSColor(Color(hex: "#6b747b")), rugosidad: 0.3, metal: 0.8), cristal = ventana()
+        cristal.roughness.contents = 0.05; cristal.metalness.contents = 0.7
+        // Vidrio reflectante: el cielo se refleja más claro arriba y cada paño tiene un tono apenas distinto (como en obra)
+        cristal.diffuse.contents = NSImage(size: NSSize(width: 240, height: 480), flipped: false) { r in
+            var g = SystemRandomNumberGenerator()
+            for fila in 0..<5 { for col in 0..<6 {
+                let t = (CGFloat(fila) + 0.5) / 5, v = CGFloat.random(in: -0.035...0.035, using: &g)
+                NSColor(calibratedRed: 0.17 + 0.16 * t + v, green: 0.29 + 0.18 * t + v, blue: 0.38 + 0.2 * t + v, alpha: 1).setFill()
+                NSRect(x: CGFloat(col) * 40, y: CGFloat(fila) * 96, width: 40, height: 96).fill()
+            } }
+            return true
         }
-        letrero(ib, "PROVEEDORA DE RED · INTERNET", "#e67e22", ancho: 5, alto: 0.55, y: 9.8, z: -2.33, giro: .pi)
+        let (anchoI, fondoI, pisoI) = (CGFloat(5.5), CGFloat(4.6), CGFloat(1.85))
+        caja(ib, anchoI - 0.5, 1.9, fondoI - 0.5, cristal)                                            // hall retranqueado
+        for (sx, sz) in [(CGFloat(-1), CGFloat(-1)), (1, -1), (-1, 1), (1, 1)] {                    // pilares de piedra del zócalo
+            caja(ib, 0.45, 1.9, 0.45, piedraI, x: sx * (anchoI / 2 - 0.22), z: sz * (fondoI / 2 - 0.22))
+        }
+        caja(ib, anchoI + 0.04, 0.3, fondoI + 0.04, piedraI, y: 2.05)                                 // viga de piedra sobre el hall
+        caja(ib, 2.8, 0.12, 1.3, aluminio, y: 2.3, z: -fondoI / 2 - 0.6)                              // marquesina de acceso
+        for sx: CGFloat in [-1.25, 1.25] { cil(ib, 0.05, 2.25, aluminio, x: sx, z: -fondoI / 2 - 1.1) }
+        ib.addChildNode(nodo(SCNCylinder(radius: 0.55, height: 1.8), oscuro, y: 0.9, z: -fondoI / 2 + 0.2))   // puerta giratoria
+        caja(ib, anchoI - 0.06, 8.9, fondoI - 0.06, cristal, y: 2.2 + 4.45)                           // muro cortina
+        for k in 0..<5 {                                                                              // antepechos entre pisos
+            caja(ib, anchoI + 0.02, 0.32, fondoI + 0.02, antepecho, y: 2.2 + CGFloat(k) * pisoI + 0.16)
+        }
+        for (largo, giro, fondo) in [(anchoI, CGFloat(0), fondoI), (fondoI, .pi / 2, anchoI)] {         // montantes verticales
+            let n = Int(largo / 0.9)
+            for k in 0...n {
+                let t = -largo / 2 + largo * CGFloat(k) / CGFloat(n)
+                for lado: CGFloat in [-1, 1] {
+                    let d = lado * (fondo / 2 + 0.03)
+                    caja(ib, 0.06, 8.9, 0.1, aluminio, x: giro == 0 ? t : d, y: 6.65, z: giro == 0 ? d : t)
+                }
+            }
+        }
+        caja(ib, anchoI + 0.1, 0.25, fondoI + 0.1, aluminio, y: 11.2)                                 // coronación
+        for (w, l, x, z) in [(anchoI + 0.1, CGFloat(0.08), CGFloat(0), -(fondoI + 0.02) / 2), (anchoI + 0.1, 0.08, 0, (fondoI + 0.02) / 2),
+                             (0.08, fondoI + 0.1, -(anchoI + 0.02) / 2, 0), (0.08, fondoI + 0.1, (anchoI + 0.02) / 2, 0)] {
+            caja(ib, w, 0.5, l, aluminio, x: x, y: 11.55, z: z)                                        // parapeto
+        }
+        caja(ib, anchoI - 0.2, 0.06, fondoI - 0.2, grava, y: 11.35)
+        for k in 0..<3 { caja(ib, 3.3, 0.05, 0.04, aluminio, x: -0.55, y: 11.55 + CGFloat(k) * 0.16, z: 1.3) } // celosía de equipos
+        for (dx, dz) in [(CGFloat(-1.6), CGFloat(-0.7)), (-0.55, -0.7), (0.5, -0.7), (-1.6, 0.6), (-0.55, 0.6), (0.5, 0.6)] {
+            caja(ib, 0.85, 0.45, 1.0, chapa, x: dx, y: 11.6, z: dz)                                    // enfriadoras del centro de datos
+            ib.addChildNode(nodo(SCNCylinder(radius: 0.3, height: 0.03), oscuro, y: 11.84, x: dx, z: dz))
+            ib.addChildNode(nodo(SCNTube(innerRadius: 0.29, outerRadius: 0.33, height: 0.06), aluminio, y: 11.85, x: dx, z: dz))
+        }
+        caja(ib, 1.1, 0.9, 1.6, hormigon, x: 1.75, y: 11.8, z: -0.2)                                   // sala de máquinas del ascensor
+        cil(ib, 0.04, 2.2, aluminio, x: 2.2, y: 12.5, z: 1.9)                                         // mástil de antenas
+        letrero(ib, "PROVEEDORA DE RED · INTERNET", "#e67e22", ancho: 4.6, alto: 0.5, y: 11.72, z: -fondoI / 2 - 0.1, giro: .pi)
         navR(pi2.x, pi2.z, 2.8, 2.4, gi)
         let pa = polE(38, -160)
         celosia(I, pa.x, pa.z, alto: 22, base: 0.75, cima: 0.25, tramos: 8, rojo, blanco); navC(pa.x, pa.z, 0.8)

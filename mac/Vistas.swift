@@ -1,6 +1,7 @@
 import SwiftUI
 import Charts
 import AppKit
+import SceneKit
 
 enum Seccion: String, CaseIterable, Identifiable {
     case villa = "Villa 3D", resumen = "Resumen", agentes = "Agentes", barrios = "Barrios", tokens = "Tokens", respaldos = "Respaldos"
@@ -295,6 +296,30 @@ struct VistaBarrios: View {
                 }
             }
             .padding(20)
+            lugarSeleccionado.padding([.horizontal, .bottom], 20)
+        }
+    }
+
+    /// Lugar del agente elegido en la villa 3D, en vivo (se puede girar, acercar y desplazar con el mouse).
+    @ViewBuilder private var lugarSeleccionado: some View {
+        if let a = almacen.seleccionado {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Dónde está \(a.nombre) en la villa", systemImage: "scope").font(.headline)
+                VistaLugar(almacen: almacen, agente: a.id)
+                    .frame(maxWidth: .infinity).frame(height: 420)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(a.color.opacity(0.5), lineWidth: 1))
+                    .help("Vista en vivo del lugar de \(a.nombre): arrastra para girar, rueda para acercar")
+                HStack {
+                    Text("Arrastrar: girar · rueda: acercar · ⌥ arrastrar: desplazar").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        seccion = Seccion.villa.rawValue
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { ControlVilla.shared.coord?.enfocarAgente(a.id) }
+                    } label: { Label("Abrir en la villa 3D", systemImage: "building.2.crop.circle") }
+                        .help("Abre la villa 3D enfocada en la oficina de \(a.nombre)")
+                }
+            }
         }
     }
 
@@ -337,6 +362,7 @@ struct VistaBarrios: View {
                         .help("Ver el detalle de \(a.nombre)")
                     }
                 }
+                lugarSeleccionado
             }
             .padding(24)
         }
@@ -486,7 +512,7 @@ struct VistaAyuda: View {
         ("building.2.crop.circle", "Villa 3D", "La villa en 3D: cada agente es un personaje distinto (ropa, pelo, estatura y accesorio de su barrio) con su nombre sobre la cabeza. Arrastra para girar, rueda para acercar y haz clic en un personaje para ver su detalle. Los que tienen un problema saludan con los brazos y muestran «!»."),
         ("gauge.with.dots.needle.67percent", "Resumen", "Totales, gráfico por barrio y estado, los agentes que necesitan atención con su solución y lo último que hizo cada uno."),
         ("person.3.sequence", "Agentes", "Tabla ordenable (clic en el título de una columna), con búsqueda y filtro por estado. Clic en una fila para ver el detalle."),
-        ("map", "Barrios", "«Toda la villa» muestra todos los barrios; cada barrio de la barra lateral (o su título) lo muestra solo y ampliado, con una tarjeta por agente y el botón «Ver en la villa 3D»."),
+        ("map", "Barrios", "«Toda la villa» muestra todos los barrios; cada barrio de la barra lateral (o su título) lo muestra solo y ampliado, con una tarjeta por agente y el botón «Ver en la villa 3D». Al elegir un agente, abajo aparece en vivo su lugar en la villa (arrastra para girar, rueda para acercar) y «Abrir en la villa 3D» vuela hasta su oficina."),
         ("chart.line.uptrend.xyaxis", "Tokens", "Consumo diario de tokens de Claude y Codex, medido sin IA por el Contador de tokens."),
         ("externaldrive.badge.timemachine", "Respaldos", "Las 30 versiones de tus respaldos nocturnos; ábrelas en el Finder para recuperar un archivo."),
         ("arrow.clockwise", "Revisar ahora (⌘R)", "Revisa ya el estado real de todos los agentes."),
@@ -660,5 +686,65 @@ struct PanelOptimizador: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Vista del lugar (Barrios)
+
+/// Segunda ventana a la misma villa viva, con su propia cámara apuntando a la oficina del agente elegido.
+struct VistaLugar: NSViewRepresentable {
+    @ObservedObject var almacen: Almacen
+    let agente: String
+
+    final class Enlace: NSObject {
+        var link: CADisplayLink?
+        var camara = SCNNode()
+        var agente = ""
+        weak var villa: Villa3D.Coordinador?
+        @objc func paso(_ e: CADisplayLink) { MainActor.assumeIsolated { villa?.tick(e) } }   // la villa sigue andando
+    }
+
+    func makeCoordinator() -> Enlace { Enlace() }
+
+    func makeNSView(context: Context) -> SCNView {
+        let villa = ControlVilla.shared.villaViva(almacen)
+        villa.sincronizar()
+        let e = context.coordinator
+        e.villa = villa
+        let c = SCNCamera(); c.zNear = 0.3; c.zFar = 700; c.fieldOfView = 50
+        e.camara.camera = c; e.camara.name = "camara-lugar"
+        villa.escena.rootNode.addChildNode(e.camara)
+        let v = SCNView()
+        v.scene = villa.escena
+        v.pointOfView = e.camara
+        v.allowsCameraControl = true
+        v.antialiasingMode = .multisampling2X
+        v.preferredFramesPerSecond = 30
+        v.isPlaying = true
+        let l = v.displayLink(target: e, selector: #selector(Enlace.paso(_:)))
+        l.preferredFrameRateRange = CAFrameRateRange(minimum: 20, maximum: 30, preferred: 30)
+        l.add(to: .main, forMode: .common); e.link = l
+        apuntar(v, e)
+        return v
+    }
+
+    func updateNSView(_ v: SCNView, context: Context) {
+        if context.coordinator.agente != agente { apuntar(v, context.coordinator) }
+    }
+
+    private func apuntar(_ v: SCNView, _ e: Enlace) {
+        e.agente = agente
+        guard let villa = e.villa, let (ojo, mira) = villa.vistaLugar(agente) else { return }
+        v.defaultCameraController.stopInertia()
+        v.pointOfView = e.camara
+        e.camara.position = ojo
+        e.camara.look(at: mira, up: SCNVector3(0, 1, 0), localFront: SCNVector3(0, 0, -1))   // horizonte siempre derecho
+        v.defaultCameraController.worldUp = SCNVector3(0, 1, 0)
+        v.defaultCameraController.target = mira
+    }
+
+    static func dismantleNSView(_ v: SCNView, coordinator e: Enlace) {
+        e.link?.invalidate(); e.link = nil
+        e.camara.removeFromParentNode()
     }
 }

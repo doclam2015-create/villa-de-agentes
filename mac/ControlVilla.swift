@@ -8,6 +8,12 @@ import SceneKit
 final class ControlVilla: ObservableObject {
     static let shared = ControlVilla()
     weak var coord: Villa3D.Coordinador?
+    /// La villa se construye una sola vez y queda viva: entrar a la villa 3D es instantáneo y Barrios puede mostrar el lugar de un agente.
+    var coordVivo: Villa3D.Coordinador?
+    func villaViva(_ almacen: Almacen) -> Villa3D.Coordinador {
+        if let c = coordVivo { return c }
+        let c = Villa3D.Coordinador(almacen: almacen); coordVivo = c; return c
+    }
     @Published var audiencia: String?
     @Published var pizarra: String?
     @Published var verAgentes = false
