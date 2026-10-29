@@ -338,6 +338,18 @@ struct Villa3D: NSViewRepresentable {
                 lineas.append(String(format: "ESTRECHO vehículo %d (%@): obstáculo a < 1 m del costado en (x %.1f, z %.1f) r %.1f rumbo %.0f° · ", k, vehiculos[k].raiz.name ?? "", x.x, x.y, hypot(x.x, x.y), atan2(x.x, x.y) * 180 / .pi) + (nav.quien(x) == "?" ? "agua u orilla (baranda de puente o borde de isla)" : nav.quien(x)))
             }
             if estrechos.isEmpty { lineas.append("OK      holgura ≥ 1 m a ambos costados de todos los vehículos") }
+            // Escala: la villa está a escala reducida (persona 1,9 m; pisos de ~1,9-3 m), así que ningún vehículo de calle
+            // debe pasar de ~1,6 personas de alto (3 m) ni de 8,5 m de largo.
+            var fueraDeEscala = 0
+            for v in vehiculos {
+                let (a, b) = v.raiz.boundingBox, s = v.raiz.scale
+                let alto = CGFloat(b.y - a.y) * CGFloat(s.y), largo = CGFloat(max(b.x - a.x, b.z - a.z)) * CGFloat(max(s.x, s.z))
+                if alto > 3.0 || largo > 8.5 {
+                    fueraDeEscala += 1
+                    lineas.append(String(format: "ESCALA  %@: %.1f m de alto y %.1f m de largo (máx. 3 × 8,5 para la escala de la villa)", v.raiz.name ?? "vehículo", alto, largo))
+                }
+            }
+            if fueraDeEscala == 0 { lineas.append("OK      todos los vehículos dentro de la escala de la villa (≤ 3 m de alto, ≤ 8,5 m de largo)") }
             let cu = centroCuartel
             let enCuartel: (CGPoint) -> Bool = { hypot($0.x - cu.x, $0.y - cu.y) < 6.2 }
             for d in [nil, "sede"] + Coordinador.posiciones.keys.filter({ !Islas.zonas.contains($0) }).sorted() {
@@ -1155,7 +1167,7 @@ struct Villa3D: NSViewRepresentable {
             if misiles {    // Humvee antiaéreo: torreta giratoria con dos contenedores de 4 misiles portátiles
                 let n = patrulla(faro: faro, freno: freno), oliva = Mat.pbr(NSColor(Color(hex: "#56623b")), rugosidad: 0.75, metal: 0.2)
                 let oscuro = Mat.pbr(NSColor(calibratedWhite: 0.1, alpha: 1)), punta = Mat.pbr(NSColor(Color(hex: "#d8d8d0")), rugosidad: 0.4)
-                let t = SCNNode(); t.position = SCNVector3(0, 2.0, -0.9); n.addChildNode(t)
+                let t = SCNNode(); t.position = SCNVector3(0, 1.75, -0.9); n.addChildNode(t)   // asentada en el techo: alzada no pasa de 3 m
                 cil(t, 0.5, 0.25, oliva, y: 0)
                 caja(t, 0.62, 0.6, 0.75, oliva, y: 0.45, chaflan: 0.06)
                 t.addChildNode(nodo(SCNBox(width: 0.4, height: 0.18, length: 0.05, chamferRadius: 0.02), Mat.pbr(NSColor(calibratedWhite: 0.15, alpha: 1), rugosidad: 0.05, metal: 0.8), y: 0.55, z: 0.38))
@@ -1167,12 +1179,12 @@ struct Villa3D: NSViewRepresentable {
                         let m = nodo(SCNCone(topRadius: 0, bottomRadius: 0.045, height: 0.1), punta, y: fy, x: lado * 0.55 + fx, z: 0.74); m.eulerAngles.x = .pi / 2; alza.addChildNode(m)
                     }
                 }
-                alza.runAction(.repeatForever(.sequence([.rotateTo(x: -0.45, y: 0, z: 0, duration: 4), .wait(duration: 3), .rotateTo(x: -0.05, y: 0, z: 0, duration: 4), .wait(duration: 5)])))
+                alza.runAction(.repeatForever(.sequence([.rotateTo(x: -0.35, y: 0, z: 0, duration: 4), .wait(duration: 3), .rotateTo(x: -0.05, y: 0, z: 0, duration: 4), .wait(duration: 5)])))
                 t.runAction(.repeatForever(.sequence([.rotateBy(x: 0, y: 1.2, z: 0, duration: 5), .wait(duration: 2), .rotateBy(x: 0, y: -2.4, z: 0, duration: 9), .wait(duration: 2), .rotateBy(x: 0, y: 1.2, z: 0, duration: 5)])))
                 return n
             }
             if let m = Modelos.nodo("humvee", largo: 4.6) {   // Humvee con antena y baliza ámbar
-                m.addChildNode(nodo(SCNCylinder(radius: 0.02, height: 1.6), Mat.pbr(.black), y: 2.7, x: 0.7, z: -1.5))
+                m.addChildNode(nodo(SCNCylinder(radius: 0.02, height: 0.9), Mat.pbr(.black), y: 2.35, x: 0.7, z: -1.5))
                 let b = nodo(SCNBox(width: 0.45, height: 0.22, length: 0.28, chamferRadius: 0.05), Mat.emisivo(.systemYellow, fuerza: 1.5), y: 2.08, z: 0.3)
                 b.runAction(.repeatForever(.sequence([.fadeOpacity(to: 0.2, duration: 0.5), .fadeOpacity(to: 1, duration: 0.5)])))
                 m.addChildNode(b)
@@ -1181,7 +1193,7 @@ struct Villa3D: NSViewRepresentable {
             let n = auto(NSColor(Color(hex: "#4b5a33")), suv: true, faro: faro, freno: freno)
             let lona = Mat.pbr(NSColor(Color(hex: "#6b6a4a")), rugosidad: 0.9)
             n.addChildNode(nodo(SCNBox(width: 1.7, height: 0.12, length: 2.6, chamferRadius: 0.05), lona, y: 1.95, z: -0.3))
-            n.addChildNode(nodo(SCNCylinder(radius: 0.02, height: 1.6), Mat.pbr(.black), y: 2.7, x: 0.7, z: -1.5))
+            n.addChildNode(nodo(SCNCylinder(radius: 0.02, height: 0.9), Mat.pbr(.black), y: 2.35, x: 0.7, z: -1.5))
             n.addChildNode(nodo(SCNBox(width: 0.5, height: 0.25, length: 0.3, chamferRadius: 0.05), Mat.emisivo(.systemYellow, fuerza: 1.5), y: 2.1, z: 0.6))
             n.childNodes.last?.runAction(.repeatForever(.sequence([.fadeOpacity(to: 0.2, duration: 0.5), .fadeOpacity(to: 1, duration: 0.5)])))
             return n
@@ -5910,7 +5922,7 @@ extension Villa3D.Coordinador {
     /// Camión militar de transporte: cabina, carrocería con arcos y lona, seis ruedas.
     private func camionMilitar(_ color: NSColor = NSColor(Color(hex: "#56623b")), nombre: String = "elem:ejercito") -> SCNNode {
         if let m = Modelos.nodo("camionmil", largo: 6.6, pintura: (color, ["Truck", "TruckDark", "TruckTop"]), nombreElem: nombre) {
-            m.scale = SCNVector3(1, 1, 1); return m
+            m.scale = SCNVector3(0.8, 0.8, 0.8); return m
         }
         let n = SCNNode()
         let m = Mat.pbr(color, rugosidad: 0.7, metal: 0.25), lona = Mat.pbr(NSColor(Color(hex: "#6f6a4a")), rugosidad: 0.9)
@@ -5923,7 +5935,7 @@ extension Villa3D.Coordinador {
         for z: CGFloat in [2.6, -0.4, -2.2] { for x: CGFloat in [-1.1, 1.1] {
             let w = nodo(SCNCylinder(radius: 0.5, height: 0.38), goma, y: 0.5, x: x, z: z); w.eulerAngles.z = .pi / 2; n.addChildNode(w)
         } }
-        let p = aplanado(n, nombre); p.scale = SCNVector3(1, 1, 1); return p
+        let p = aplanado(n, nombre); p.scale = SCNVector3(0.8, 0.8, 0.8); return p
     }
 
     /// Lanzamisiles autopropulsado (proa +z, 11 × 2,6 m): camión de 4 ejes con cabina blindada, gatos estabilizadores y
@@ -6603,28 +6615,28 @@ extension Villa3D.Coordinador {
             if red {
                 for k in 0..<6 { caja(n, 0.5, 0.025, 0.04, cromo, x: -0.5, y: 3.28, z: 0.4 - CGFloat(k) * 0.4) }
                 barra(n, SCNVector3(-0.75, 3.28, 0.5), SCNVector3(-0.75, 3.28, -1.7), 0.02, cromo); barra(n, SCNVector3(-0.25, 3.28, 0.5), SCNVector3(-0.25, 3.28, -1.7), 0.02, cromo)
-                for (k, r) in [CGFloat(0.12), 0.095, 0.07].enumerated() { cil(n, r, 1.3, k == 2 ? cromo : negro, x: 0.65, y: 3.8 + CGFloat(k) * 1.1, z: -2.7) }
-                caja(n, 0.5, 0.06, 0.06, negro, x: 0.65, y: 6.35, z: -2.7)
-                let plato = SCNNode(); plato.position = SCNVector3(0.65, 6.15, -2.55); plato.eulerAngles.x = .pi / 2 - 0.25; n.addChildNode(plato)
+                for (k, r) in [CGFloat(0.12), 0.095, 0.07].enumerated() { cil(n, r, 0.5, k == 2 ? cromo : negro, x: 0.65, y: 3.4 + CGFloat(k) * 0.12, z: -2.7) }   // mástil plegado
+                caja(n, 0.5, 0.06, 0.06, negro, x: 0.65, y: 3.9, z: -2.7)
+                let plato = SCNNode(); plato.position = SCNVector3(0.65, 3.92, -2.0); n.addChildNode(plato)
                 let pm = blancoC.copy() as! SCNMaterial; pm.isDoubleSided = true
                 plato.addChildNode(SCNNode(geometry: { let g = torno([(r: 0.01, y: 0), (r: 0.2, y: 0.03), (r: 0.38, y: 0.1), (r: 0.5, y: 0.18)], lados: 24); g.materials = [pm]; return g }()))
-                caja(n, 0.28, 0.5, 0.1, blancoC, x: 0.85, y: 6.35, z: -2.85)
+                caja(n, 0.28, 0.1, 0.5, blancoC, x: 0.85, y: 3.5, z: -2.85)
                 caja(n, 0.7, 0.55, 0.6, negro, x: -0.6, y: 0.85, z: -2.3)                                    // generador
             } else {
-                cil(n, 0.32, 0.25, negro, y: 3.27, z: -2.2); n.addChildNode(nodo({ let g = SCNSphere(radius: 0.62); g.isGeodesic = true; g.segmentCount = 8; return g }(), blancoC, y: 3.85, z: -2.2))
+                cil(n, 0.32, 0.25, negro, y: 3.27, z: -2.2); n.addChildNode(nodo({ let g = SCNSphere(radius: 0.5); g.isGeodesic = true; g.segmentCount = 8; return g }(), blancoC, y: 3.7, z: -2.2))
                 let panel = nodo(SCNBox(width: 1.6, height: 0.04, length: 1.0, chamferRadius: 0), { let m = Mat.pbr(.white, rugosidad: 0.12, metal: 0.5); m.diffuse.contents = Self.celdasSolares; return m }(), y: 3.3, z: -0.3)
                 n.addChildNode(panel)
-                cil(n, 0.035, 1.8, cromo, x: 0.9, y: 4.05, z: 0.75)
-                caja(n, 0.9, 0.03, 0.03, cromo, x: 0.9, y: 4.95, z: 0.75)
+                cil(n, 0.035, 0.9, cromo, x: 0.9, y: 3.6, z: 0.75)
+                caja(n, 0.9, 0.03, 0.03, cromo, x: 0.9, y: 4.05, z: 0.75)
                 for k in 0..<3 {
                     let a = CGFloat(k) * 2 * .pi / 3
-                    barra(n, SCNVector3(0.45, 5.05, 0.75), SCNVector3(0.45 + cos(a) * 0.2, 5.05, 0.75 + sin(a) * 0.2), 0.012, cromo)
-                    n.addChildNode(nodo(SCNSphere(radius: 0.055), blancoC, y: 5.05, x: 0.45 + cos(a) * 0.2, z: 0.75 + sin(a) * 0.2))
+                    barra(n, SCNVector3(0.45, 4.15, 0.75), SCNVector3(0.45 + cos(a) * 0.2, 4.15, 0.75 + sin(a) * 0.2), 0.012, cromo)
+                    n.addChildNode(nodo(SCNSphere(radius: 0.055), blancoC, y: 4.15, x: 0.45 + cos(a) * 0.2, z: 0.75 + sin(a) * 0.2))
                 }
-                caja(n, 0.04, 0.12, 0.35, blancoC, x: 1.35, y: 5.05, z: 0.75)
+                caja(n, 0.04, 0.12, 0.35, blancoC, x: 1.35, y: 4.15, z: 0.75)
             }
         }
-        let p = aplanado(n, nombre); p.scale = SCNVector3(1, 1, 1); return p
+        let p = aplanado(n, nombre); p.scale = SCNVector3(0.7, 0.7, 0.7); return p   // escala de la villa, como los camiones del mall
     }
 
     /// Excavadora hidráulica sobre orugas: tren de rodaje con zapatas, rodillos, rueda motriz y guía; tornamesa; superestructura
@@ -7101,8 +7113,8 @@ extension Villa3D.Coordinador {
         let total = largoRuta(ruta, hasta: ruta.count)
         let cisterna = camionServicio("agua", "#1f6fb2", nombre: "elem:ener-agua", faro: faro, freno: fr)
         let basura = camionServicio("residuos", "#2e7d32", nombre: "elem:ener-residuos", faro: faro, freno: fr)
-        for (k, v) in [bus0, Vehiculo(cisterna, ruta: ruta, s: total * 0.36, velocidad: 7, largo: 6.6, ancho: 2.4, paciente: true),
-                       Vehiculo(basura, ruta: ruta, s: total * 0.68, velocidad: 7, largo: 6.6, ancho: 2.4, paciente: true)].enumerated() {
+        for (k, v) in [bus0, Vehiculo(cisterna, ruta: ruta, s: total * 0.36, velocidad: 7, largo: 4.8, ancho: 1.8, paciente: true),
+                       Vehiculo(basura, ruta: ruta, s: total * 0.68, velocidad: 7, largo: 4.8, ancho: 1.8, paciente: true)].enumerated() {
             Islas.buses.append(v); escena.rootNode.addChildNode(v.raiz)
             if k == 2 { soloDeDia.append(v.raiz) }
         }
@@ -7113,7 +7125,7 @@ extension Villa3D.Coordinador {
         let red = camionServicio("isp", "#e67e22", nombre: "elem:ener-isp", faro: faro, freno: fr)
         let meteo = camionServicio("clima", "#2e86c1", nombre: "elem:ener-clima", faro: faro, freno: fr)
         for (k, c) in [electrica, red, meteo].enumerated() {
-            let v = Vehiculo(c, ruta: interior, s: largoInt * CGFloat(k) / 3, velocidad: 5.5, largo: 6.6, ancho: 2.4, paciente: true)
+            let v = Vehiculo(c, ruta: interior, s: largoInt * CGFloat(k) / 3, velocidad: 5.5, largo: 4.8, ancho: 1.8, paciente: true)
             Islas.buses.append(v); escena.rootNode.addChildNode(v.raiz)
         }
         pulsoRadio(en: Islas.ener(pa.x, pa.z), altura: 20)
