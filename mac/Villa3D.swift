@@ -2303,6 +2303,10 @@ struct Villa3D: NSViewRepresentable {
                 let m = Islas.ener(0, 4)
                 volar(SCNVector3(m.x, 0, m.y), distancia: 120, inclinacion: 0.7, giro: Islas.angEner + .pi); return
             }
+            if zid == "uni" {             // la Ciudad Universitaria completa: campus, deportes y barrio estudiantil
+                let m = Islas.uni(0, 2)
+                volar(SCNVector3(m.x, 0, m.y), distancia: 105, inclinacion: 0.7, giro: Islas.angUni + .pi); return
+            }
             if Islas.zonas.contains(zid) {  // barrios de la isla distrito: edificios altos, se ven de más lejos
                 let frente = zid == "banco" ? Islas.angDist : zid == "fach" ? Islas.angFA : atan2(-c.x, -c.y)   // la base aérea mira a su pista     // de frente a la fachada (miran a la villa)
                 volar(SCNVector3(c.x, 0, c.y), distancia: max(r * 3.2, 40), inclinacion: 0.55, giro: frente); return
@@ -3961,6 +3965,13 @@ enum Islas {
     nonisolated static let angCaleta: CGFloat = -2.95, angBalneario: CGFloat = -2.38, angMarina: CGFloat = -2.64
     nonisolated static let angEner: CGFloat = 2.88, rEner: CGFloat = 203, radioEner: CGFloat = 44     // Isla de Energía y Servicios
     nonisolated static func ener(_ x: CGFloat, _ z: CGFloat) -> CGPoint { w(angEner, rEner, x, z) }
+    nonisolated static let angUni: CGFloat = -1.5, rUni: CGFloat = 258, radioUni: CGFloat = 52       // Ciudad Universitaria (entre el Distrito y el aeropuerto)
+    nonisolated static func uni(_ x: CGFloat, _ z: CGFloat) -> CGPoint { w(angUni, rUni, x, z) }
+    /// Puente isla Distrito ⇄ Ciudad Universitaria (extremos en el mundo, 1 m dentro de cada isla).
+    nonisolated static let puenteUni: (CGPoint, CGPoint) = {
+        let a = dist(0, 0), c = uni(0, 0), d = hypot(c.x - a.x, c.y - a.y), u = CGPoint(x: (c.x - a.x) / d, y: (c.y - a.y) / d)
+        return (CGPoint(x: a.x + u.x * (radioDist - 1), y: a.y + u.y * (radioDist - 1)), CGPoint(x: c.x - u.x * (radioUni - 1), y: c.y - u.y * (radioUni - 1)))
+    }()
     nonisolated static func polar(_ r: CGFloat, _ a: CGFloat) -> CGPoint { CGPoint(x: sin(a) * r, y: cos(a) * r) }
     nonisolated static func w(_ ang: CGFloat, _ r: CGFloat, _ x: CGFloat, _ z: CGFloat) -> CGPoint {
         CGPoint(x: sin(ang) * (r + z) + cos(ang) * x, y: cos(ang) * (r + z) - sin(ang) * x)
@@ -3984,19 +3995,19 @@ enum Islas {
     nonisolated static func caleta(_ x: CGFloat, _ z: CGFloat) -> CGPoint { w(angCaleta, rCaleta, x, z) }
     /// Barrios de la isla distrito: posición local y radio de su plaza.
     nonisolated static let barrios: [(id: String, x: CGFloat, z: CGFloat, r: CGFloat)] = [
-        ("trade", -18, -21, 11), ("casino", 18, -25, 8), ("banco", 19, -9, 7),
-        ("uni", -19, 20, 14), ("ciencia", 19, 20, 11), ("museo", 0, 36, 8)]
+        ("ciencia", -18, -21, 11), ("casino", 18, -25, 8), ("banco", 19, -9, 7),
+        ("trade", -19, 21, 11), ("museo", 0, 36, 8)]          // el Trade Center, al fondo: ya no tapa nada; atrás a la derecha sale el puente a la Universidad
     nonisolated static let zonas: Set<String> = ["trade", "banco", "casino", "uni", "ciencia", "museo", "aeropuerto", "fach", "armada", "ejercito", "defensa", "comisaria", "gobmar", "energia"]
     /// Barrios sin plaza de adoquines (sus edificios ocupan el suelo).
     nonisolated static let sinPlaza: Set<String> = ["aeropuerto", "fach", "armada", "ejercito", "defensa", "comisaria", "gobmar"]
     nonisolated static let posiciones: [String: CGPoint] = {
         var d = Dictionary(uniqueKeysWithValues: barrios.map { ($0.id, dist($0.x, $0.z)) })
         d["aeropuerto"] = aero(-12, -46); d["fach"] = fa(-12, -22); d["armada"] = naval(10, -22); d["ejercito"] = def(12, -30); d["gobmar"] = w(angNav, 0, 11, 68)
-        d["defensa"] = polar(17, 2.86); d["comisaria"] = polar(48, 0.9); d["energia"] = ener(0, -12); return d
+        d["defensa"] = polar(17, 2.86); d["comisaria"] = polar(48, 0.9); d["energia"] = ener(0, -12); d["uni"] = uni(2, -8); return d
     }()
     nonisolated static let radios: [String: CGFloat] = {
         var d = Dictionary(uniqueKeysWithValues: barrios.map { ($0.id, $0.r) }); d["aeropuerto"] = 9
-        for k in ["fach", "armada", "ejercito"] { d[k] = 6 }; d["defensa"] = 3.5; d["comisaria"] = 4.5; d["gobmar"] = 4; d["energia"] = 9; return d
+        for k in ["fach", "armada", "ejercito"] { d[k] = 6 }; d["defensa"] = 3.5; d["comisaria"] = 4.5; d["gobmar"] = 4; d["energia"] = 9; d["uni"] = 14; return d
     }()
     /// Puentes a las islas: tramo elevado (rampa de subida, tablero a 1,3 m sobre el mar, rampa de bajada).
     nonisolated static let altoPuente: CGFloat = 1.3, rampaPuente: CGFloat = 11
@@ -4011,11 +4022,13 @@ enum Islas {
             let sube = min(rampaPuente, (rB - rA) / 2 - 0.5)
             if rad > rA && rad < rB { return rad < rA + sube ? (rad - rA) / sube * altoPuente : rad > rB - sube ? (rB - rad) / sube * altoPuente : altoPuente }
         }
-        let (a, b) = puenteFA, L = hypot(b.x - a.x, b.y - a.y), dx = (b.x - a.x) / L, dz = (b.y - a.y) / L
-        let t = (p.x - a.x) * dx + (p.y - a.y) * dz, lat = abs((p.x - a.x) * dz - (p.y - a.y) * dx)
-        if lat < 5 && t > 0 && t < L {
-            let sube = min(9.5, L / 2 - 0.5)
-            return t < sube ? t / sube * altoPuente : t > L - sube ? (L - t) / sube * altoPuente : altoPuente
+        for (a, b) in [puenteFA, puenteUni] {
+            let L = hypot(b.x - a.x, b.y - a.y), dx = (b.x - a.x) / L, dz = (b.y - a.y) / L
+            let t = (p.x - a.x) * dx + (p.y - a.y) * dz, lat = abs((p.x - a.x) * dz - (p.y - a.y) * dx)
+            if lat < 5 && t > 0 && t < L {
+                let sube = min(9.5, L / 2 - 0.5)
+                return t < sube ? t / sube * altoPuente : t > L - sube ? (L - t) / sube * altoPuente : altoPuente
+            }
         }
         return 0
     }
@@ -4042,6 +4055,7 @@ enum Islas {
         if hypot(p.x - fa(0, 0).x, p.y - fa(0, 0).y) < radioFA + 4 { return "fach" }
         if hypot(p.x - naval(0, 0).x, p.y - naval(0, 0).y) < radioNav + 4 { return "armada" }
         if hypot(p.x - ener(0, 0).x, p.y - ener(0, 0).y) < radioEner + 4 { return "energia" }
+        if hypot(p.x - uni(0, 0).x, p.y - uni(0, 0).y) < radioUni + 4 { return "uni" }
         let c = dist(0, 0)
         guard hypot(p.x - c.x, p.y - c.y) < radioDist + 4 else { return nil }
         return posiciones.filter { barrios.map(\.id).contains($0.key) }.min { hypot(p.x - $0.value.x, p.y - $0.value.y) < hypot(p.x - $1.value.x, p.y - $1.value.y) }?.key
@@ -4214,7 +4228,7 @@ extension Villa3D.Coordinador {
 
     func montarIslas(_ r: SCNNode) {
         let pasto = Mat.textura(.pasto, repetir: 14), arena = Mat.textura(.arena, repetir: 12)
-        for (c, rad) in [(Islas.aero(0, 0), Islas.radioAero), (Islas.dist(0, 0), Islas.radioDist), (Islas.def(0, 0), Islas.radioDef), (Islas.caleta(0, 0), Islas.radioCaleta), (Islas.fa(0, 0), Islas.radioFA), (Islas.naval(0, 0), Islas.radioNav), (Islas.ener(0, 0), Islas.radioEner)] {
+        for (c, rad) in [(Islas.aero(0, 0), Islas.radioAero), (Islas.dist(0, 0), Islas.radioDist), (Islas.def(0, 0), Islas.radioDef), (Islas.caleta(0, 0), Islas.radioCaleta), (Islas.fa(0, 0), Islas.radioFA), (Islas.naval(0, 0), Islas.radioNav), (Islas.ener(0, 0), Islas.radioEner), (Islas.uni(0, 0), Islas.radioUni)] {
             playaNatural(centro: c, desde: rad + 1, ancho: 8)
             r.addChildNode(nodo(SCNCylinder(radius: rad, height: 0.5), pasto, y: -0.24, x: c.x, z: c.y))
             nav.anillo(c.x, c.y, rad + 1.5, hueco: 0, ancho: 0)
@@ -4225,6 +4239,7 @@ extension Villa3D.Coordinador {
         avenidaIsla(r, ang: Islas.angNav, hasta: Islas.rNav - Islas.radioNav + 2, nombre: "BASE NAVAL", color: "#1a3d5c")
         avenidaIsla(r, ang: Islas.angEner, hasta: Islas.rEner - Islas.radioEner + 2, nombre: "ISLA DE ENERGÍA", color: "#c27c0e")
         puenteRecto(r, Islas.puenteFA.0, Islas.puenteFA.1)
+        puenteRecto(r, Islas.puenteUni.0, Islas.puenteUni.1)
         avenidaIsla(r, ang: Islas.angCaleta, hasta: Islas.rCaleta - Islas.radioCaleta + 2, nombre: "CALETA", color: "#1f6fb2")
         montarAeropuerto(r)
         montarDistrito(r)
@@ -4234,6 +4249,7 @@ extension Villa3D.Coordinador {
         montarArmada(r)
         montarMinisterioYComisaria(r)
         montarEnergia(r)
+        montarUniversidad(r)
         montarCaleta(r)
         montarBalneario(r)
         montarMarina(r)
@@ -4340,13 +4356,21 @@ extension Villa3D.Coordinador {
                 zf += 9
             }
         }
+        // Avenida al puente de la Ciudad Universitaria: de la rotonda, en línea recta, hasta el puente
+        let eU = Islas.local(Islas.angDist, Islas.rDist, Islas.puenteUni.0), lU = hypot(eU.x, eU.y), uU = CGPoint(x: eU.x / lU, y: eU.y / lU)
+        func aCaminoUni(_ x: CGFloat, _ z: CGFloat) -> CGFloat {
+            let t = max(9, min(lU, x * uU.x + z * uU.y)); return hypot(x - uU.x * t, z - uU.y * t)
+        }
+        let tU = (9 + lU + 0.5) / 2, largoU = lU + 0.5 - 9
+        caja(D, 7, 0.06, largoU, asfalto, x: uU.x * tU, y: 0.03, z: uU.y * tU, giro: atan2(uU.x, uU.y))
+        caja(D, 0.15, 0.07, largoU - 2, linea, x: uU.x * tU, y: 0.035, z: uU.y * tU, giro: atan2(uU.x, uU.y))
         // Árboles y palmeras del distrito, lejos de calles y barrios
         var azar = Azar(semilla: 41)
         for _ in 0..<70 {
             let a = azar.real() * .pi * 2, rr = 8 + azar.real() * 38
             let x = sin(a) * rr, zz = cos(a) * rr
             if abs(x) < 6 || abs(zz - 2) < 5 && abs(x) < 42 || hypot(x, zz - 2) < 12 { continue }
-            if Islas.barrios.contains(where: { hypot(x - $0.x, zz - $0.z) < $0.r + 2 }) { continue }
+            if Islas.barrios.contains(where: { hypot(x - $0.x, zz - $0.z) < $0.r + 2 }) || aCaminoUni(x, zz) < 6 { continue }
             if hypot(x - 34, zz + 14) < 10 || hypot(x + 33, zz + 10) < 8 || hypot(x - 38, zz - 12) < 9 { continue }   // restaurante, café e iglesia
             if rr > 40 { palmera(D, x: x, z: zz) } else { arbolito(D, x: x, z: zz, alto: 2.6 + azar.real() * 1.6) }
             nav.circulo(Islas.dist(x, zz).x, Islas.dist(x, zz).y, 0.3)
@@ -4362,7 +4386,6 @@ extension Villa3D.Coordinador {
             case "trade": tradeCenter(B, navLocal)
             case "banco": banco(B, navLocal)
             case "casino": casino(B, navLocal)
-            case "uni": universidad(B, navLocal)
             case "ciencia": centroCientifico(B, navLocal)
             default: museo(B, navLocal)
             }
@@ -4715,6 +4738,218 @@ extension Villa3D.Coordinador {
         caja(B, 8.6, 1.2, 0.5, Mat.textura(.marmol, repetir: 2), y: 0.6, z: 11.6)
         letrero(B, "UNIVERSIDAD DE LA VILLA", "#5b3a29", ancho: 8.2, alto: 0.8, y: 0.65, z: 11.88)
         nav(0, 11.6, 4.3, 0.3)
+    }
+
+    // MARK: Ciudad Universitaria (isla propia, unida a la isla Distrito por un puente)
+
+    /// Marco local de la isla (−z hacia la villa): facultades en el patio central (2, −8), biblioteca, aula magna,
+    /// casino de comidas, residencias y barrio estudiantil con tiendas; paseos peatonales y campus deportivo al fondo.
+    func montarUniversidad(_ r: SCNNode) {
+        let A = Islas.angUni
+        let U = marcoLocal(A, Islas.rUni); r.addChildNode(U)
+        func navR(_ x: CGFloat, _ z: CGFloat, _ hx: CGFloat, _ hz: CGFloat, _ giro: CGFloat = 0, linea: Int = #line) {
+            let q = Islas.uni(x, z); nav.rect(q.x, q.y, hx, hz, A + giro, linea: linea)
+        }
+        func navC(_ x: CGFloat, _ z: CGFloat, _ rr: CGFloat, linea: Int = #line) { let q = Islas.uni(x, z); nav.circulo(q.x, q.y, rr, linea: linea) }
+        func edificio(_ x: CGFloat, _ z: CGFloat, giro: CGFloat) -> SCNNode {
+            let n = SCNNode(); n.position = SCNVector3(x, 0, z); n.eulerAngles.y = giro; U.addChildNode(n); return n
+        }
+        let asfalto = Mat.pbr(NSColor(calibratedWhite: 0.2, alpha: 1), rugosidad: 0.85), linea = Mat.pbr(NSColor(calibratedWhite: 0.95, alpha: 1))
+        let adoquin = Mat.textura(.adoquin, repetir: 10, tinte: "#d8cfc0", mezcla: 0.4), marmol = Mat.textura(.marmol, repetir: 2)
+        let ladrillo = Mat.textura(.estuco, repetir: 3, tinte: "#b5654a"), piedra = Mat.textura(.estuco, repetir: 3, tinte: "#efe6d2")
+        let techo = Mat.pbr(NSColor(Color(hex: "#5b3a29")), rugosidad: 0.6), madera = Mat.textura(.madera, repetir: 2)
+        let poste = Mat.pbr(NSColor(calibratedWhite: 0.15, alpha: 1), rugosidad: 0.4, metal: 0.8), blanco = Mat.pbr(NSColor(calibratedWhite: 0.96, alpha: 1))
+        let pasto = Mat.pbr(NSColor(calibratedRed: 0.27, green: 0.55, blue: 0.24, alpha: 1), rugosidad: 0.9)
+        let luz = Mat.emisivo(NSColor(calibratedRed: 1, green: 0.88, blue: 0.6, alpha: 1)); focos.append(luz)
+        func farol(_ x: CGFloat, _ z: CGFloat) {
+            cil(U, 0.07, 4.2, poste, x: x, z: z); U.addChildNode(nodo(SCNSphere(radius: 0.22), luz, y: 4.3, x: x, z: z)); navC(x, z, 0.12)
+        }
+        func banca(_ x: CGFloat, _ z: CGFloat, giro: CGFloat) {
+            let b = edificio(x, z, giro: giro)
+            caja(b, 1.6, 0.06, 0.45, madera, y: 0.45); caja(b, 1.6, 0.4, 0.05, madera, y: 0.72, z: -0.22)
+            for s: CGFloat in [-0.7, 0.7] { caja(b, 0.06, 0.45, 0.4, poste, x: s, y: 0.22) }
+            navR(x, z, 0.8, 0.25, giro)
+        }
+
+        // Acceso: avenida desde el puente, pórtico y rotonda de llegada con el escudo
+        let e = Islas.local(A, Islas.rUni, Islas.puenteUni.1), le = hypot(e.x, e.y), u = CGPoint(x: e.x / le, y: e.y / le), gu = atan2(u.x, u.y)
+        let rc = CGPoint(x: u.x * 30, y: u.y * 30)
+        caja(U, 7, 0.06, le + 0.5 - 35.4, asfalto, x: u.x * (le + 35.9) / 2, y: 0.03, z: u.y * (le + 35.9) / 2, giro: gu)
+        caja(U, 0.15, 0.07, le - 37, linea, x: u.x * (le + 35.9) / 2, y: 0.035, z: u.y * (le + 35.9) / 2, giro: gu)
+        U.addChildNode(nodo(SCNTube(innerRadius: 1.6, outerRadius: 5.6, height: 0.06), asfalto, y: 0.031, x: rc.x, z: rc.y))
+        cil(U, 1.5, 0.3, pasto, x: rc.x, y: 0.15, z: rc.y)
+        cil(U, 0.45, 1.6, marmol, x: rc.x, y: 0.8, z: rc.y)
+        U.addChildNode(nodo(SCNSphere(radius: 0.55), Mat.pbr(NSColor(Color(hex: "#c9a227")), rugosidad: 0.25, metal: 0.9), y: 2.1, x: rc.x, z: rc.y))
+        navC(rc.x, rc.y, 1.5)
+        let P = edificio(u.x * 40, u.y * 40, giro: gu)                     // pórtico: el letrero mira a quien llega por el puente
+        for s: CGFloat in [-1, 1] {
+            caja(P, 0.9, 6.6, 0.9, piedra, x: s * 4.7); caja(P, 1.1, 0.3, 1.1, techo, x: s * 4.7, y: 6.75)
+            let q = CGPoint(x: u.x * 40 + s * 4.7 * cos(gu), y: u.y * 40 - s * 4.7 * sin(gu)); navR(q.x, q.y, 0.45, 0.45, gu)
+        }
+        caja(P, 10.6, 1.3, 0.9, piedra, y: 7.5); caja(P, 11, 0.25, 1.2, techo, y: 8.3)
+        letrero(P, "CIUDAD UNIVERSITARIA", "#5b3a29", ancho: 9.2, alto: 0.9, y: 7.5, z: 0.5)
+        letrero(P, "UNIVERSIDAD DE LA VILLA", "#5b3a29", ancho: 9.2, alto: 0.9, y: 7.5, z: -0.5, giro: .pi)
+
+        // Paseos peatonales: calle de los Estudiantes (barrio), paseo de los Aromos (este-oeste) y paseo del Deporte (norte)
+        let zc = rc.y, x0 = rc.x + 5.4
+        caja(U, 35 - x0, 0.07, 6, adoquin, x: (x0 + 35) / 2, y: 0.035, z: zc)
+        caja(U, 80, 0.07, 6, adoquin, y: 0.035, z: 12)
+        caja(U, 5, 0.07, 30, adoquin, x: 5.5, y: 0.035, z: 29.5)
+        for x: CGFloat in [-38, -30, 0, 12, 24, 36] { farol(x, 15.6) }
+        for z: CGFloat in [22, 32, 42] { farol(8.4, z) }
+        for x: CGFloat in [-1, 7, 15] { farol(x, zc - 3.9) }
+        for x: CGFloat in [-34, -20, 14, 28] { banca(x, 9.6, giro: 0) }
+        for x: CGFloat in [-36, -30, -24, -18, -12, 12, 18, 24, 30, 36] { arbolito(U, x: x, z: 7.4, alto: 2.4); navC(x, 7.4, 0.3) }
+
+        // Patio central con las facultades y la rectoría (el barrio «uni»: su plaza la pone montarZonas)
+        let cQ = Islas.uni(2, -8), yaw = atan2(-cQ.x, -cQ.y)
+        let B = SCNNode(); B.position = SCNVector3(cQ.x, 0.12, cQ.y); B.eulerAngles.y = yaw
+        universidad(B) { x, z, hx, hz in nav.rect(cQ.x + x * cos(yaw) + z * sin(yaw), cQ.y - x * sin(yaw) + z * cos(yaw), hx, hz, yaw) }
+        escena.rootNode.addChildNode(aplanado(B, "elem:uni-facultades"))
+
+        // Biblioteca central: podio de mármol, tres pisos de vidrio entre columnas y frontón, mirando al patio
+        let L = edificio(-27, -6, giro: .pi / 2)
+        caja(L, 13.6, 0.4, 12.6, marmol)
+        for k in 0..<3 { caja(L, 13.4, 0.5 - CGFloat(k) * 0.12, 1.2 - CGFloat(k) * 0.4, marmol, y: CGFloat(k) * 0.12 + 0.12, z: 6.9 - CGFloat(k) * 0.4) }
+        caja(L, 13, 9.4, 11, piedra, y: 5.1, z: -0.5)
+        for k in 0..<3 {
+            caja(L, 11.6, 2.0, 0.06, ventana(), y: 1.9 + CGFloat(k) * 3.1, z: 5.03)
+            for s: CGFloat in [-1, 1] { caja(L, 0.06, 2.0, 9.4, ventana(), x: s * 6.53, y: 1.9 + CGFloat(k) * 3.1, z: -0.5) }
+        }
+        for x: CGFloat in [-5.4, -3.2, -1.1, 1.1, 3.2, 5.4] { cil(L, 0.3, 8.6, marmol, x: x, y: 4.7, z: 5.75) }
+        caja(L, 13.4, 1.2, 1.8, marmol, y: 9.6, z: 5.2); caja(L, 13.4, 0.35, 12, techo, y: 10.0, z: -0.3)
+        letrero(L, "BIBLIOTECA CENTRAL", "#5b3a29", ancho: 8, alto: 0.8, y: 9.6, z: 6.15)
+        caja(L, 2.2, 2.6, 0.06, ventana(), y: 1.7, z: 5.04)
+        navR(-26.6, -6, 6.6, 6.8)
+
+        // Aula Magna: nave con bóveda de cañón y pórtico
+        let M = edificio(-40.5, -2, giro: .pi)
+        caja(M, 7, 6.4, 11, Mat.textura(.estuco, repetir: 3, tinte: "#f2ede2"), y: 3.2, z: 0.5)
+        let boveda = nodo(SCNCylinder(radius: 3.6, height: 11.2), techo, y: 6.4, z: 0.5); boveda.eulerAngles.x = .pi / 2; boveda.scale = SCNVector3(1, 1, 0.55); M.addChildNode(boveda)
+        for s: CGFloat in [-1, 1] { cil(M, 0.28, 6, marmol, x: s * 2.4, y: 3, z: 5.7) }
+        caja(M, 6.2, 0.9, 1.3, marmol, y: 6.4, z: 5.5)
+        letrero(M, "AULA MAGNA", "#5b3a29", ancho: 5, alto: 0.7, y: 6.4, z: 6.2)
+        caja(M, 2.4, 3.2, 0.06, Mat.pbr(NSColor(Color(hex: "#4a3524")), rugosidad: 0.6), y: 1.6, z: 6.03)
+        for s: CGFloat in [-1, 1] { caja(M, 0.06, 1.6, 8, ventana(), x: s * 3.53, y: 3.6, z: 0) }
+        navR(-40.5, -2.6, 3.6, 6.2)
+
+        // Casino de comidas con terraza techada de quitasoles, frente a la calle de los Estudiantes
+        let C = edificio(26, -6, giro: .pi)
+        caja(C, 12, 4.6, 10, Mat.textura(.estuco, repetir: 3, tinte: "#f3e3c3"), y: 2.3)
+        caja(C, 12.6, 0.35, 10.6, techo, y: 4.75)
+        caja(C, 10.8, 2.4, 0.06, ventana(), y: 1.9, z: 5.03)
+        letrero(C, "CASINO DE COMIDAS · UNIVERSIDAD", "#a04000", ancho: 9, alto: 0.7, y: 4.1, z: 5.08)
+        cil(C, 0.35, 2.2, Mat.pbr(NSColor(calibratedWhite: 0.6, alpha: 1), metal: 0.6), x: -4, y: 5.9, z: -3)
+        caja(C, 12, 0.15, 4.2, madera, y: 0.075, z: 7.2)
+        let lona = [Mat.pbr(NSColor(Color(hex: "#c0392b")), rugosidad: 0.7), Mat.pbr(NSColor(Color(hex: "#f4f1ea")), rugosidad: 0.7)]
+        for (k, x) in ([-4.2, -1.4, 1.4, 4.2] as [CGFloat]).enumerated() {
+            cil(C, 0.5, 0.05, blanco, x: x, y: 0.9, z: 7.2); cil(C, 0.05, 0.85, poste, x: x, y: 0.5, z: 7.2)
+            cil(C, 0.04, 2.3, poste, x: x, y: 1.3, z: 7.2)
+            C.addChildNode(nodo(SCNCone(topRadius: 0.05, bottomRadius: 1.2, height: 0.5), lona[k % 2], y: 2.45, x: x, z: 7.2))
+            for s: CGFloat in [-1, 1] { caja(C, 0.4, 0.45, 0.4, madera, x: x + s * 0.8, y: 0.37, z: 7.2) }
+            let q = CGPoint(x: 26 - x, y: -6 - 7.2); navC(q.x, q.y, 1.2)
+        }
+        navR(26, -6, 6, 5)
+
+        // Residencias: torre universitaria y dos hogares de ladrillo frente a la calle
+        let T = edificio(39, -4, giro: .pi)
+        caja(T, 6, 15.5, 10, Mat.textura(.estuco, repetir: 3, tinte: "#d6dde3"), y: 7.75)
+        for k in 0..<5 {
+            caja(T, 5.2, 1.6, 0.06, ventana(), y: 1.6 + CGFloat(k) * 3.1, z: 5.03)
+            caja(T, 5.6, 0.12, 0.8, Mat.pbr(NSColor(calibratedWhite: 0.85, alpha: 1)), y: 0.75 + CGFloat(k) * 3.1, z: 5.4)
+            for s: CGFloat in [-1, 1] { caja(T, 0.06, 1.6, 8.6, ventana(), x: s * 3.03, y: 1.6 + CGFloat(k) * 3.1) }
+        }
+        letrero(T, "RESIDENCIA UNIVERSITARIA", "#1f6fb2", ancho: 5.6, alto: 0.6, y: 15.0, z: 5.08)
+        navR(39, -4, 3, 5.4)
+        for (x, nombre) in [(CGFloat(23), "HOGAR ESTUDIANTIL"), (31, "RESIDENCIA LOS AROMOS")] {
+            let H = edificio(x, -20.5, giro: .pi)
+            caja(H, 6, 9.3, 5, ladrillo, y: 4.65); caja(H, 6.4, 0.35, 5.4, techo, y: 9.45)
+            for k in 0..<3 { caja(H, 5, 1.4, 0.06, ventana(), y: 1.7 + CGFloat(k) * 3.1, z: 2.53) }
+            caja(H, 1.2, 2.2, 0.06, Mat.pbr(NSColor(Color(hex: "#4a3524")), rugosidad: 0.6), y: 1.1, z: 2.55)
+            letrero(H, nombre, "#5b3a29", ancho: 5, alto: 0.55, y: 8.7, z: 2.58)
+            navR(x, -20.5, 3, 2.5)
+        }
+
+        // Barrio estudiantil: tiendas de dos pisos al sur de la calle, con toldo y vitrina
+        let tiendas: [(CGFloat, String, String, String)] = [(-5, "PIZZERÍA EL CAMPUS", "#e8c39e", "#c0392b"), (3, "LIBRERÍA UNIVERSITARIA", "#9fc5c0", "#117a65"),
+                                                             (11, "CAFÉ LA TESIS", "#e3a6a0", "#6e2c00"), (19, "FOTOCOPIADORA · APUNTES", "#f0d98c", "#1f6fb2")]
+        for (x, nombre, fachada, color) in tiendas {
+            let S = edificio(x, zc - 7.2, giro: 0)
+            caja(S, 7, 6.2, 5, Mat.textura(.estuco, repetir: 2, tinte: fachada), y: 3.1)
+            caja(S, 7.3, 0.3, 5.3, techo, y: 6.35)
+            caja(S, 5.6, 2.2, 0.06, ventana(), y: 1.3, z: 2.53)
+            caja(S, 4.8, 1.3, 0.06, ventana(), y: 4.7, z: 2.53)
+            let toldo = caja(S, 6.4, 0.08, 1.2, Mat.pbr(NSColor(Color(hex: color)), rugosidad: 0.7), y: 2.75, z: 3.05); toldo.eulerAngles.x = 0.3
+            letrero(S, nombre, color, ancho: 6, alto: 0.55, y: 3.55, z: 2.58)
+            navR(x, zc - 7.2, 3.5, 2.5)
+        }
+
+        // Campus deportivo: estadio con pista atlética y tribuna, canchas y polideportivo
+        let D = edificio(-15, 31, giro: 0); D.position.y = 0.02
+        func pista(_ inset: CGFloat, _ m: SCNMaterial, _ y: CGFloat) {
+            let w = 34 - 2 * inset, h = 22 - 2 * inset, rr = h / 2
+            let s = SCNShape(path: NSBezierPath(roundedRect: NSRect(x: -w / 2, y: -h / 2, width: w, height: h), xRadius: rr, yRadius: rr), extrusionDepth: 0.02)
+            let n = nodo(s, m, y: y); n.eulerAngles.x = -.pi / 2; D.addChildNode(n)
+        }
+        let tartan = Mat.pbr(NSColor(Color(hex: "#b5523b")), rugosidad: 0.85)
+        pista(0, tartan, 0.01)
+        for (k, d) in ([0.3, 0.9, 1.5, 2.1] as [CGFloat]).enumerated() { pista(d, linea, 0.015 + CGFloat(k) * 0.008); pista(d + 0.07, tartan, 0.019 + CGFloat(k) * 0.008) }
+        pista(2.4, Mat.textura(.pasto, repetir: 6), 0.05)
+        caja(D, 0.12, 0.02, 15, linea, y: 0.07); D.addChildNode(nodo(SCNTube(innerRadius: 2.2, outerRadius: 2.32, height: 0.02), linea, y: 0.07))
+        for s: CGFloat in [-1, 1] {
+            for z: CGFloat in [-1.6, 1.6] { cil(D, 0.05, 1.2, blanco, x: s * 12.6, z: z); navC(-15 + s * 12.6, 31 + z, 0.06) }
+            caja(D, 0.08, 0.08, 3.3, blanco, x: s * 12.6, y: 1.2)
+        }
+        let tribuna = edificio(-15, 17.8, giro: 0)
+        for k in 0..<4 { caja(tribuna, 20, 0.4 + CGFloat(k) * 0.4, 0.8, Mat.pbr(NSColor(Color(hex: k % 2 == 0 ? "#1f6fb2" : "#d6dde3")), rugosidad: 0.6), z: 1.2 - CGFloat(k) * 0.8) }
+        for x: CGFloat in [-9.6, 0, 9.6] { caja(tribuna, 0.18, 4.4, 0.18, poste, x: x, z: -1.5) }
+        let alero = caja(tribuna, 20.6, 0.15, 3.4, Mat.pbr(NSColor(calibratedWhite: 0.9, alpha: 1), metal: 0.4), y: 4.4, z: 0.1); alero.eulerAngles.x = -0.08
+        letrero(tribuna, "ESTADIO UNIVERSITARIO", "#1f6fb2", ancho: 8, alto: 0.7, y: 3.4, z: -1.65, giro: .pi)
+        navR(-15, 17.8, 10, 1.7)
+        let cancha: [(CGFloat, String, Bool)] = [(21.6, "#2b5d8a", true), (28.8, "#b35a2b", false), (36.0, "#3b7a57", true)]
+        for (z, color, red) in cancha {
+            let K = edificio(16, z, giro: 0)
+            caja(K, 12, 0.04, 6.4, Mat.pbr(NSColor(Color(hex: color)), rugosidad: 0.8), y: 0.02)
+            for s: CGFloat in [-1, 1] { caja(K, 12, 0.02, 0.08, linea, y: 0.05, z: s * 2.8); caja(K, 0.08, 0.02, 5.6, linea, x: s * 5.5, y: 0.05) }
+            caja(K, 0.08, 0.02, 5.6, linea, y: 0.05)
+            if red {
+                caja(K, 0.03, 0.9, 6, Mat.pbr(NSColor(calibratedWhite: 0.95, alpha: 0.8)), y: 0.75)
+                for s: CGFloat in [-1, 1] { cil(K, 0.04, 1.2, poste, z: s * 3.05); navC(16, z + s * 3.05, 0.05) }
+            } else {
+                for s: CGFloat in [-1, 1] {
+                    cil(K, 0.06, 3.05, poste, x: s * 6.1); caja(K, 0.05, 0.6, 1.0, blanco, x: s * 5.95, y: 2.9)
+                    K.addChildNode(nodo(SCNTube(innerRadius: 0.2, outerRadius: 0.23, height: 0.03), Mat.pbr(.systemOrange), y: 2.6, x: s * 5.65)); navC(16 + s * 6.1, z, 0.07)
+                }
+            }
+        }
+        let reja = Mat.pbr(NSColor(calibratedWhite: 0.55, alpha: 1), rugosidad: 0.4, metal: 0.7); reja.transparency = 0.55
+        caja(U, 0.04, 2.6, 21.6, reja, x: 22.4, y: 1.3, z: 28.8); navR(22.4, 28.8, 0.05, 10.8)
+        caja(U, 12.8, 2.6, 0.04, reja, x: 16, y: 1.3, z: 39.6); navR(16, 39.6, 6.4, 0.05)
+        caja(U, 12.8, 2.6, 0.04, reja, x: 16, y: 1.3, z: 18); navR(16, 18, 6.4, 0.05)
+        letrero(U, "CANCHAS DEPORTIVAS", "#117a65", ancho: 4.4, alto: 0.5, x: 16, y: 2.9, z: 17.85, giro: .pi)
+        let G = edificio(32, 22, giro: .pi)
+        caja(G, 9, 6.6, 10, Mat.textura(.estuco, repetir: 3, tinte: "#d9dde0"), y: 3.3)
+        let cubierta = nodo(SCNCylinder(radius: 4.8, height: 10.2), Mat.pbr(NSColor(Color(hex: "#9fabb4")), rugosidad: 0.4, metal: 0.6), y: 6.6)
+        cubierta.eulerAngles.x = .pi / 2; cubierta.scale = SCNVector3(1, 1, 0.4); G.addChildNode(cubierta)
+        caja(G, 7.6, 2.2, 0.06, ventana(), y: 2.2, z: 5.03)
+        letrero(G, "POLIDEPORTIVO · PISCINA", "#1f6fb2", ancho: 7, alto: 0.6, y: 5.4, z: 5.08)
+        navR(32, 22, 4.6, 5.1)
+
+        // Árboles y palmeras del campus, lejos de calles, paseos y edificios
+        let huellas: [(CGFloat, CGFloat, CGFloat, CGFloat)] = [(-26.6, -6, 7.6, 7.8), (-40.5, -2.6, 4.6, 7.2), (26, -9, 7, 8), (39, -4, 4, 6.4), (27, -20.5, 8, 3.5),
+                                                               (7, zc - 7.2, 16.5, 3.5), (13, zc, 23, 4), (0, 12, 42, 4), (5.5, 29.5, 3.5, 16), (-15, 31, 18.5, 12.5),
+                                                               (-15, 17.8, 11, 2.7), (16, 28.8, 7.4, 11.8), (32, 22, 5.6, 6.1)]
+        var azar = Azar(semilla: 77)
+        for _ in 0..<90 {
+            let a = azar.real() * .pi * 2, rr = 6 + azar.real() * 43, x = sin(a) * rr, z = cos(a) * rr
+            if hypot(x - 2, z + 8) < 16 || hypot(x - rc.x, z - rc.y) < 7.5 { continue }
+            let t = max(30, min(le, x * u.x + z * u.y)); if hypot(x - u.x * t, z - u.y * t) < 6 { continue }
+            if huellas.contains(where: { abs(x - $0.0) < $0.2 + 1.2 && abs(z - $0.1) < $0.3 + 1.2 }) { continue }
+            if rr > 44 { palmera(U, x: x, z: z) } else { arbolito(U, x: x, z: z, alto: 2.4 + azar.real() * 1.4) }
+            navC(x, z, 0.3)
+        }
+        escena.rootNode.addChildNode(aplanado(U, "elem:uni-campus"))
+        U.removeFromParentNode()
     }
 
     private func relojImagen() -> NSImage {

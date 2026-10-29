@@ -6,8 +6,8 @@ import CoreGraphics
 /// (8 direcciones) y se suavizan por línea de vista: nadie atraviesa muros, muebles ni barandas.
 final class Navegacion {
     let celda: CGFloat = 0.3
-    let origen: CGFloat = -255        // cubre la isla principal y todas las islas (también la de Energía)
-    let n = 1700
+    let origen: CGFloat = -330        // cubre la isla principal y todas las islas (también la Universitaria)
+    let n = 2200
     let margen: CGFloat = 0.28           // radio de una persona
     private(set) var bloq: [Bool]
     /// Quién bloqueó cada zona (archivo:línea y caja), para que la auditoría física nombre el obstáculo.

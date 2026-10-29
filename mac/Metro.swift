@@ -28,7 +28,7 @@ final class MetroVilla {
         ("energia", "ISLA DE ENERGÍA", 149, false, "el puente a la Isla de Energía (centrales, agua potable, meteorología, red, residuos y observatorio) y las Cocheras del metro"),
         ("caleta", "CALETA · MARINA", 205, false, "el puente a la Caleta de pescadores y la Marina"),
         ("balneario", "BALNEARIO", 235, false, "el Balneario Villa y su playa"),
-        ("trade", "VILLA TRADE", 265, true, "el puente a la isla Distrito: Villa Trade Center, Banco, Casino y Universidad"),
+        ("trade", "VILLA TRADE", 265, true, "el puente a la isla Distrito (Villa Trade Center, Banco, Casino, Centro científico y Museo) y, por un segundo puente, a la Ciudad Universitaria"),
         ("aeropuerto", "AEROPUERTO · FACh", 290, true, "el puente al Aeropuerto Internacional y a la Base Aérea"),
         ("puerto", "PUERTO", 320, false, "la Capitanía del puerto y el Servicio de urgencias")]
     nonisolated static func ang(_ g: CGFloat) -> CGFloat { g * .pi / 180 }

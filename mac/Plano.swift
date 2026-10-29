@@ -29,6 +29,10 @@ enum PlanoVilla {
                                  ("iglesia", "Iglesia de la Villa", 37, 11.5, "leaf.fill")] {
             l.append(LugarPlano(id: id, nombre: n, p: Islas.dist(x, z), icono: i, color: .purple, distancia: 30))
         }
+        for (id, n, x, z, i) in [("biblioteca", "Biblioteca Central", CGFloat(-27), CGFloat(-6), "books.vertical.fill"), ("casino-uni", "Casino de comidas", 26, -6, "fork.knife"),
+                                 ("estadio-uni", "Estadio universitario", -15, 31, "figure.run"), ("barrio-uni", "Barrio estudiantil", 7, -34, "house.fill")] {
+            l.append(LugarPlano(id: id, nombre: n, p: Islas.uni(x, z), icono: i, color: .brown, distancia: 30))
+        }
         l.append(LugarPlano(id: "caleta", nombre: "Caleta de pescadores", p: Islas.caleta(0, 0), icono: "fish.fill", color: .cyan, distancia: 40))
         for (id, n, a, i) in costa { l.append(LugarPlano(id: id, nombre: n, p: Islas.polar(84, a), icono: i, color: .cyan, distancia: 34)) }
         l.append(LugarPlano(id: "flota", nombre: "Flota de la Armada", p: Islas.polar(185, PuertoYFlota.flotaAng), icono: "shield.lefthalf.filled", color: .gray, barrio: "flota"))
@@ -45,7 +49,7 @@ struct VistaPlano: View {
     @EnvironmentObject var almacen: Almacen
     @ObservedObject var c = ControlVilla.shared
     @State private var sobre: String?
-    private let alcance: CGFloat = 232        // metros desde el centro hasta el borde del plano
+    private let alcance: CGFloat = 318        // metros desde el centro hasta el borde del plano (incluye la Ciudad Universitaria)
 
     var body: some View {
         let lugares = PlanoVilla.lugares(almacen)
@@ -77,7 +81,7 @@ struct VistaPlano: View {
                         // Tierra firme, islas y playas
                         let tierra = CGPoint(x: sin(Villa3D.Coordinador.acceso) * 606, y: cos(Villa3D.Coordinador.acceso) * 606)
                         circulo(tierra, 412, Color(red: 0.87, green: 0.8, blue: 0.62)); circulo(tierra, 402, Color(red: 0.42, green: 0.6, blue: 0.35))
-                        for (p, r) in [(CGPoint.zero, CGFloat(76)), (Islas.aero(0, 0), Islas.radioAero), (Islas.dist(0, 0), Islas.radioDist), (Islas.def(0, 0), Islas.radioDef), (Islas.caleta(0, 0), Islas.radioCaleta), (Islas.fa(0, 0), Islas.radioFA), (Islas.naval(0, 0), Islas.radioNav), (Islas.ener(0, 0), Islas.radioEner)] {
+                        for (p, r) in [(CGPoint.zero, CGFloat(76)), (Islas.aero(0, 0), Islas.radioAero), (Islas.dist(0, 0), Islas.radioDist), (Islas.def(0, 0), Islas.radioDef), (Islas.caleta(0, 0), Islas.radioCaleta), (Islas.fa(0, 0), Islas.radioFA), (Islas.naval(0, 0), Islas.radioNav), (Islas.ener(0, 0), Islas.radioEner), (Islas.uni(0, 0), Islas.radioUni)] {
                             circulo(p, r + 9, Color(red: 0.9, green: 0.84, blue: 0.66)); circulo(p, r, Color(red: 0.36, green: 0.6, blue: 0.32))
                         }
                         // Caminos: anillo, avenidas y pedraplenes
@@ -91,6 +95,7 @@ struct VistaPlano: View {
                             ctx.stroke(c, with: .color(.black.opacity(0.55)), lineWidth: max(1.5, 3 * esc))
                         }
                         var pfa = Path(); pfa.move(to: aPantalla(Islas.puenteFA.0)); pfa.addLine(to: aPantalla(Islas.puenteFA.1))
+                        pfa.move(to: aPantalla(Islas.puenteUni.0)); pfa.addLine(to: aPantalla(Islas.puenteUni.1))
                         ctx.stroke(pfa, with: .color(.black.opacity(0.55)), lineWidth: max(1.5, 3 * esc))
                         // Metro: Línea Circular y ramal a las cocheras
                         let rm = MetroVilla.radio * esc, cm = aPantalla(.zero)
