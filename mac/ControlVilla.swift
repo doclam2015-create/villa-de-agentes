@@ -20,8 +20,17 @@ final class ControlVilla: ObservableObject {
     @Published var elemento: String?        // helicóptero, garita, guardia, vehículo… con su reporte
     @Published var verAudiencia = false     // conversación con IA en el despacho
     @Published var verCentro = false        // Centro de mando: salud, recursos, seguridad y alarma
+    /// Plano de la villa: aparece solo abajo a la izquierda y se pliega a una pestaña (se recuerda entre sesiones).
+    @Published var verPlano = (UserDefaults.standard.object(forKey: "verPlano") as? Bool) ?? true { didSet { UserDefaults.standard.set(verPlano, forKey: "verPlano") } }
+    @Published var planoAbierto = (UserDefaults.standard.object(forKey: "planoAbierto") as? Bool) ?? true { didSet { UserDefaults.standard.set(planoAbierto, forKey: "planoAbierto") } }
     @Published var directorio: String?      // pizarra de un edificio (sus agentes), abierta abajo a la derecha
+    @Published var pantallaCompleta = false   // la villa ocupa toda la pantalla, sin barra lateral
     @Published var pausada = false          // «solo panel»: la villa 3D detenida a pedido
+    @Published var verMetro = false         // panel Metro: vistas del circuito del tren y de los accesos de las estaciones
+    @Published var metroModo = "arriba"
+    @Published var metroAng: CGFloat = 0
+    @Published var metroVuelta = false
+    private var relojMetro: Timer?
     @Published var dormida = false          // pausa automática tras 10 min sin tocar la villa
     private var reloj: Timer?
     private var almacen: Almacen? { coord?.almacen }
@@ -36,6 +45,19 @@ final class ControlVilla: ObservableObject {
     /// Clic en una oficina: la primera vez, su pizarra y vista frontal; otra vez (ya de frente), entra a la oficina.
     func clicOficina(_ id: String) {
         if almacen?.seleccion == id && dentro == nil { pizarra = id; entrar(id) } else { seleccionar(id) }
+    }
+
+    /// Pantalla completa del sistema; al entrar o salir (botón, ⌃⌘F, Esc o botón verde) se oculta o vuelve la barra lateral.
+    func alternarPantallaCompleta() {
+        (NSApp.keyWindow ?? NSApp.windows.first { $0.isVisible && $0.canBecomeMain })?.toggleFullScreen(nil)
+    }
+    private var observadores: [Any] = []
+    private init() {
+        for (n, v) in [(NSWindow.didEnterFullScreenNotification, true), (NSWindow.didExitFullScreenNotification, false)] {
+            observadores.append(NotificationCenter.default.addObserver(forName: n, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { ControlVilla.shared.pantallaCompleta = v }
+            })
+        }
     }
 
     func alternarPausa() { pausada.toggle(); dormida = false; coord?.tocado(); coord?.ajustarRitmo() }
@@ -75,15 +97,43 @@ final class ControlVilla: ObservableObject {
 
     func irBarrio(_ zid: String) {
         if zid == "sede" { abrirSede(); return }
-        detenerRecorrido(); verSede = false; dentro = nil; coord?.irBarrio(zid)
+        detenerRecorrido(); verSede = false; dentro = nil
+        // La tarjeta abierta corresponde al lugar al que se va (antes quedaba la del último elemento, p. ej. el portaaviones)
+        let tarjeta: [String: String] = ["fach": "fach", "armada": "armada", "ejercito": "ejercito", "comisaria": "comisaria", "gobmar": "gobmar",
+                                         "defensa": "ministerio", "aeropuerto": "aeropuerto", "energia": "energia"]
+        if let t = tarjeta[zid] { mostrarElemento(t) } else { elemento = nil }
+        coord?.irBarrio(zid)
     }
 
-    func abrirSede() { detenerRecorrido(); dentro = nil; verSede = true; verAgentes = false; coord?.enfocarSede() }
+    func abrirSede() { detenerRecorrido(); dentro = nil; elemento = nil; verSede = true; verAgentes = false; coord?.enfocarSede() }
 
     func general() {
-        detenerRecorrido(); verSede = false; pizarra = nil; dentro = nil
+        detenerRecorrido(); verSede = false; pizarra = nil; dentro = nil; elemento = nil
         almacen?.seleccion = nil
         coord?.vistaGeneral()
+    }
+
+    /// Vista del metro: exterior/interior en el rumbo actual, desde arriba, o la torre de acceso `k`.
+    func vistaMetro(_ modo: String, k: Int = 0) {
+        detenerRecorrido(); verSede = false; dentro = nil; metroModo = modo
+        if modo == "estacion" { mostrarElemento("metro-" + MetroVilla.estaciones[k].id) } else { elemento = nil }
+        coord?.vistaMetro(modo, a: metroAng, k: k)
+    }
+    /// Gira la vista exterior o interior alrededor del circuito (paso en grados).
+    func girarMetro(_ grados: CGFloat) {
+        metroAng += grados * .pi / 180
+        if metroModo != "exterior" && metroModo != "interior" { metroModo = "exterior" }
+        coord?.vistaMetro(metroModo, a: metroAng, k: 0)
+    }
+    /// Vuelta completa automática: avanza 15° cada 2,5 s por fuera o por dentro del circuito.
+    func alternarVueltaMetro() {
+        relojMetro?.invalidate(); relojMetro = nil
+        metroVuelta.toggle()
+        guard metroVuelta else { return }
+        girarMetro(0)
+        relojMetro = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { guard let s = self, s.verMetro else { self?.relojMetro?.invalidate(); self?.metroVuelta = false; return }; s.girarMetro(15) }
+        }
     }
 
     func alternarRecorrido() { recorrido ? detenerRecorrido() : iniciarRecorrido() }
@@ -151,11 +201,16 @@ struct MandoVilla: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
+            if c.verPlano {         // plano siempre a mano, abajo a la izquierda (sobre la línea de ayuda)
+                VStack { Spacer(); HStack { VistaPlano(); Spacer() } }.padding(.bottom, 34)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+            }
             VStack(alignment: .leading, spacing: 10) {
                 barra
                 HStack(alignment: .top, spacing: 10) {
                     if c.verAgentes { PanelAgentes().transition(.move(edge: .leading).combined(with: .opacity)) }
                     if c.verSede { PanelSede().transition(.move(edge: .leading).combined(with: .opacity)) }
+                    if c.verMetro { PanelMetro().transition(.move(edge: .leading).combined(with: .opacity)) }
                 }
                 if c.verCentro {
                     VStack(spacing: 0) {
@@ -187,6 +242,8 @@ struct MandoVilla: View {
             else if let z = c.directorio { TarjetaDirectorio(zid: z).padding(14) }
             else if let id = c.pizarra, let a = almacen.agentes.first(where: { $0.id == id }) { TarjetaPizarra(a: a).padding(14) }
         }
+        // Elegir un agente (barra lateral, centro de mando, tablas) cierra la tarjeta del buque o vehículo anterior
+        .onChange(of: almacen.seleccion) { _, s in if s != nil { c.elemento = nil; c.directorio = nil } }
         .overlay(alignment: .bottomLeading) {
             if c.verAudiencia { PanelAudiencia().padding(.horizontal, 14).padding(.bottom, 34).transition(.move(edge: .bottom).combined(with: .opacity)) }
         }
@@ -248,6 +305,9 @@ struct MandoVilla: View {
             }
             boton(c.recorrido ? "Detener" : "Recorrido", c.recorrido ? "stop.fill" : "play.fill", c.recorrido, "Visita uno a uno a los agentes, primero los que necesitan atención") { c.alternarRecorrido() }
             boton("Vista general", "scope", false, "Vuelve a ver toda la villa (⌘0)") { c.general() }
+            boton(c.verPlano ? "Ocultar plano" : "Plano", "map", c.verPlano, "Plano de la villa (abajo a la izquierda): clic en un lugar para ir directo") { c.verPlano.toggle(); if c.verPlano { c.planoAbierto = true } }
+            boton(c.pantallaCompleta ? "Salir de pantalla completa" : "Pantalla completa", c.pantallaCompleta ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+                  c.pantallaCompleta, "Muestra la villa en toda la pantalla, sin barra lateral (⌃⌘F). Esc o este botón para volver") { c.alternarPantallaCompleta() }
             boton(c.pausada ? "Reanudar" : "Pausar", c.pausada ? "play.circle" : "pause.circle", c.pausada,
                   "Pausar detiene la animación 3D para ahorrar batería y CPU (los datos y avisos siguen al día)") { c.alternarPausa() }
             boton("◐ " + c.nombreTema, "circle.lefthalf.filled", false, "Automático sigue la hora del Mac; Claro fuerza el día; Oscuro fuerza la noche") { c.cambiarTema() }
@@ -570,5 +630,55 @@ struct PanelHacienda: View {
         j["estado"] = estado; j["decision_t"] = Date().timeIntervalSince1970
         escribir(ruta, j)
         refrescar(estado == "aprobada" ? "Solicitud aprobada." : "Solicitud rechazada.")
+    }
+}
+
+// MARK: - Panel Metro: visión completa de la Línea Circular
+
+struct PanelMetro: View {
+    @ObservedObject var c = ControlVilla.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Metro · Línea Circular", systemImage: "tram.fill").font(.headline)
+                Spacer()
+                Button { if c.metroVuelta { c.alternarVueltaMetro() }; c.verMetro = false } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.plain).help("Cerrar el panel del metro")
+            }
+            Text("CIRCUITO").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                boton("Exterior", "arrow.up.left.and.arrow.down.right", "exterior", "Viaducto de frente, visto desde afuera del círculo (desde el mar)")
+                boton("Interior", "arrow.down.right.and.arrow.up.left", "interior", "Viaducto visto desde adentro del círculo (desde la villa)")
+                boton("Arriba", "square.dashed", "arriba", "Todo el circuito, ramal y cocheras desde arriba")
+            }
+            HStack(spacing: 6) {
+                Button { c.girarMetro(-30) } label: { Image(systemName: "chevron.left") }.help("Avanzar 30° alrededor del circuito, hacia la izquierda")
+                Button { c.alternarVueltaMetro() } label: {
+                    Label(c.metroVuelta ? "Detener vuelta" : "Vuelta completa", systemImage: c.metroVuelta ? "stop.fill" : "arrow.triangle.2.circlepath")
+                }.help("Recorre el circuito completo, 15° cada 2,5 s, por fuera o por dentro según la vista elegida")
+                Button { c.girarMetro(30) } label: { Image(systemName: "chevron.right") }.help("Avanzar 30° alrededor del circuito, hacia la derecha")
+            }
+            Divider()
+            Text("ENTRADAS Y SALIDAS DE LAS ESTACIONES").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(MetroVilla.estaciones.enumerated()), id: \.offset) { k, e in
+                        Button { c.vistaMetro("estacion", k: k) } label: {
+                            Label(e.nombre.capitalized, systemImage: "figure.walk.arrival").frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).padding(.vertical, 3)
+                        .help("Torre de acceso de \(e.nombre.capitalized): escalera, ascensor y vereda a la calle\(e.estacionamiento ? " y al estacionamiento" : "")")
+                    }
+                }
+            }.frame(maxHeight: 260)
+        }
+        .padding(14).frame(width: 290)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func boton(_ t: String, _ i: String, _ modo: String, _ ayuda: String) -> some View {
+        Button { c.vistaMetro(modo) } label: { Label(t, systemImage: i).frame(maxWidth: .infinity) }
+            .buttonStyle(.borderedProminent).tint(c.metroModo == modo ? .accentColor : .gray).help(ayuda)
     }
 }

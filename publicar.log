@@ -1,0 +1,105 @@
+== Wed Oct 28 21:58:56 -03 2026
+mac/Metro.swift:323:13: warning: immutable value 'asfalto' was never used; consider replacing with '_' or removing it [#NoUsage]
+321 |         let cartel = Villa3D.Coordinador.mCartel(e.nombre, MetroVilla.rojo, ancho: 900, brillo: 0.7)
+322 |         let marco = Mat.pbr(NSColor(calibratedWhite: 0.2, alpha: 1), rugosidad: 0.4, metal: 0.6)
+323 |         let asfalto = Mat.pbr(NSColor(calibratedWhite: 0.16, alpha: 1), rugosidad: 0.95), linea = Mat.pbr(.white, rugosidad: 0.6)
+    |             `- warning: immutable value 'asfalto' was never used; consider replacing with '_' or removing it [#NoUsage]
+324 |         func caja(_ w: CGFloat, _ h: CGFloat, _ l: CGFloat, _ m: SCNMaterial, d: CGFloat, lat: CGFloat, y: CGFloat) {
+325 |             let (p, t) = eje(0, d), n = normal(t), q = CGPoint(x: p.x + n.x * lat, y: p.y + n.y * lat)
+
+mac/Metro.swift:323:91: warning: immutable value 'linea' was never used; consider replacing with '_' or removing it [#NoUsage]
+321 |         let cartel = Villa3D.Coordinador.mCartel(e.nombre, MetroVilla.rojo, ancho: 900, brillo: 0.7)
+322 |         let marco = Mat.pbr(NSColor(calibratedWhite: 0.2, alpha: 1), rugosidad: 0.4, metal: 0.6)
+323 |         let asfalto = Mat.pbr(NSColor(calibratedWhite: 0.16, alpha: 1), rugosidad: 0.95), linea = Mat.pbr(.white, rugosidad: 0.6)
+    |                                                                                           `- warning: immutable value 'linea' was never used; consider replacing with '_' or removing it [#NoUsage]
+324 |         func caja(_ w: CGFloat, _ h: CGFloat, _ l: CGFloat, _ m: SCNMaterial, d: CGFloat, lat: CGFloat, y: CGFloat) {
+325 |             let (p, t) = eje(0, d), n = normal(t), q = CGPoint(x: p.x + n.x * lat, y: p.y + n.y * lat)
+
+[#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
+mac/Villa3D.swift:4003:55: warning: immutable value 'arena' was never used; consider replacing with '_' or removing it [#NoUsage]
+4001 | 
+4002 |     func montarIslas(_ r: SCNNode) {
+4003 |         let pasto = Mat.textura(.pasto, repetir: 14), arena = Mat.textura(.arena, repetir: 12)
+     |                                                       `- warning: immutable value 'arena' was never used; consider replacing with '_' or removing it [#NoUsage]
+4004 |         for (c, rad) in [(Islas.aero(0, 0), Islas.radioAero), (Islas.dist(0, 0), Islas.radioDist), (Islas.def(0, 0), Islas.radioDef), (Islas.caleta(0, 0), Islas.radioCaleta), (Islas.fa(0, 0), Islas.radioFA), (Islas.naval(0, 0), Islas.radioNav), (Islas.ener(0, 0), Islas.radioEner)] {
+4005 |             playaNatural(centro: c, desde: rad + 1, ancho: 8)
+
+mac/Villa3D.swift:5161:58: warning: call to main actor-isolated instance method 'caminar(_:ciclo:amplitud:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+5061 | 
+5062 |     /// Marcha natural: zancada de piernas, balanceo de brazos opuesto, rebote y leve giro de cadera, a la cadencia dada.
+5063 |     private func caminar(_ p: PersonaPlaya, ciclo: Double, amplitud: CGFloat = 0.42) {
+     |                  `- note: calls to instance method 'caminar(_:ciclo:amplitud:)' from outside of its actor context are implicitly asynchronous
+5064 |         for (k, pierna) in p.piernas.enumerated() {
+5065 |             let s: CGFloat = k == 0 ? 1 : -1
+     :
+5159 |             let medio = x0 + (x1 - x0) * (0.4 + azar.real() * 0.3)
+5160 |             func tramo(_ hasta: CGFloat, desde: CGFloat) -> SCNAction {
+5161 |                 .sequence([.run { [weak self] _ in self?.caminar(b, ciclo: ciclo) }, .move(to: SCNVector3(hasta, yArena(z), z), duration: Double(abs(hasta - desde)) / vel)])
+     |                                                          `- warning: call to main actor-isolated instance method 'caminar(_:ciclo:amplitud:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+5162 |             }
+5163 |             var az = Azar(semilla: UInt64(100 + k))
+
+mac/Villa3D.swift:5164:74: warning: call to main actor-isolated instance method 'quieto(_:gesto:azar:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+5087 |     }
+5088 | 
+5089 |     private func quieto(_ p: PersonaPlaya, gesto: Bool, azar: inout Azar) {
+     |                  `- note: calls to instance method 'quieto(_:gesto:azar:)' from outside of its actor context are implicitly asynchronous
+5090 |         for pierna in p.piernas { pierna.removeAction(forKey: "paso"); pierna.runAction(.rotateTo(x: 0, y: 0, z: 0, duration: 0.4)) }
+5091 |         for rod in p.rodillas { rod.removeAction(forKey: "paso"); rod.runAction(.rotateTo(x: 0.04, y: 0, z: 0, duration: 0.4)) }
+     :
+5162 |             }
+5163 |             var az = Azar(semilla: UInt64(100 + k))
+5164 |             let mira = SCNAction.sequence([.run { [weak self] _ in self?.quieto(b, gesto: false, azar: &az) }, .rotateTo(x: 0, y: 0, z: 0, duration: 1.2),
+     |                                                                          `- warning: call to main actor-isolated instance method 'quieto(_:gesto:azar:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+5165 |                                            .wait(duration: 4 + Double(k)), .rotateTo(x: 0, y: .pi / 2, z: 0, duration: 1.2)])
+5166 |             b.raiz.runAction(.repeatForever(.sequence([
+
+mac/Villa3D.swift:5168:47: warning: call to main actor-isolated instance method 'quieto(_:gesto:azar:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+5087 |     }
+5088 | 
+5089 |     private func quieto(_ p: PersonaPlaya, gesto: Bool, azar: inout Azar) {
+     |                  `- note: calls to instance method 'quieto(_:gesto:azar:)' from outside of its actor context are implicitly asynchronous
+5090 |         for pierna in p.piernas { pierna.removeAction(forKey: "paso"); pierna.runAction(.rotateTo(x: 0, y: 0, z: 0, duration: 0.4)) }
+5091 |         for rod in p.rodillas { rod.removeAction(forKey: "paso"); rod.runAction(.rotateTo(x: 0.04, y: 0, z: 0, duration: 0.4)) }
+     :
+5166 |             b.raiz.runAction(.repeatForever(.sequence([
+5167 |                 .wait(duration: Double(k) * 3), tramo(medio, desde: x0), mira, tramo(x1, desde: medio),
+5168 |                 .run { [weak self] _ in self?.quieto(b, gesto: false, azar: &az) }, .rotateTo(x: 0, y: -.pi / 2, z: 0, duration: 1.5),
+     |                                               `- warning: call to main actor-isolated instance method 'quieto(_:gesto:azar:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+5169 |                 tramo(x0, desde: x1), .run { [weak self] _ in self?.quieto(b, gesto: false, azar: &az) }, .rotateTo(x: 0, y: .pi / 2, z: 0, duration: 1.5)])))
+5170 |         }
+
+mac/Villa3D.swift:5169:69: warning: call to main actor-isolated instance method 'quieto(_:gesto:azar:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+5087 |     }
+5088 | 
+5089 |     private func quieto(_ p: PersonaPlaya, gesto: Bool, azar: inout Azar) {
+     |                  `- note: calls to instance method 'quieto(_:gesto:azar:)' from outside of its actor context are implicitly asynchronous
+5090 |         for pierna in p.piernas { pierna.removeAction(forKey: "paso"); pierna.runAction(.rotateTo(x: 0, y: 0, z: 0, duration: 0.4)) }
+5091 |         for rod in p.rodillas { rod.removeAction(forKey: "paso"); rod.runAction(.rotateTo(x: 0.04, y: 0, z: 0, duration: 0.4)) }
+     :
+5167 |                 .wait(duration: Double(k) * 3), tramo(medio, desde: x0), mira, tramo(x1, desde: medio),
+5168 |                 .run { [weak self] _ in self?.quieto(b, gesto: false, azar: &az) }, .rotateTo(x: 0, y: -.pi / 2, z: 0, duration: 1.5),
+5169 |                 tramo(x0, desde: x1), .run { [weak self] _ in self?.quieto(b, gesto: false, azar: &az) }, .rotateTo(x: 0, y: .pi / 2, z: 0, duration: 1.5)])))
+     |                                                                     `- warning: call to main actor-isolated instance method 'quieto(_:gesto:azar:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+5170 |         }
+5171 |         // Nadadores a crol y a pecho dentro de las boyas, y bañistas con el agua a la cintura
+
+mac/Villa3D.swift:5831:90: warning: immutable value 'gris' was never used; consider replacing with '_' or removing it [#NoUsage]
+5829 |         let F = marcoLocal(Islas.angFA, Islas.rFA); r.addChildNode(F)
+5830 |         let asfalto = Mat.pbr(NSColor(calibratedWhite: 0.18, alpha: 1), rugosidad: 0.85), blanco = Mat.pbr(NSColor(calibratedWhite: 0.96, alpha: 1))
+5831 |         let hormigon = Mat.pbr(NSColor(calibratedWhite: 0.6, alpha: 1), rugosidad: 0.8), gris = Mat.pbr(NSColor(Color(hex: "#8d98a3")), rugosidad: 0.5, metal: 0.4)
+     |                                                                                          `- warning: immutable value 'gris' was never used; consider replacing with '_' or removing it [#NoUsage]
+5832 |         let luz = Mat.emisivo(NSColor(calibratedRed: 1, green: 0.9, blue: 0.6, alpha: 1)); focos.append(luz)
+5833 |         func navL(_ x: CGFloat, _ z: CGFloat, _ hx: CGFloat, _ hz: CGFloat, linea: Int = #line) { let q = Islas.fa(x, z); nav.rect(q.x, q.y, hx, hz, Islas.angFA, linea: linea) }
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+[#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
+/var/folders/vd/fh7rwb055_s89hldgznhrvgr0000gn/T/tmp.LJSLabZlWM//villa-build/Villa de Agentes.app: replacing existing signature
+Compilada en /var/folders/vd/fh7rwb055_s89hldgznhrvgr0000gn/T/tmp.LJSLabZlWM//villa-build/Villa de Agentes.app
+COMPILA OK
+github.com
+  ✓ Logged in to github.com account doclam2015-create (keyring)
+  - Active account: true
+  - Git operations protocol: https
+  - Token: gho_************************************
+  - Token scopes: 'gist', 'read:org', 'repo', 'workflow'

@@ -24,13 +24,15 @@ struct VistaPrincipal: View {
     @State private var ayuda = false
     @State private var informe: URL?
     @State private var altaAgentes = false
+    @State private var columnas = NavigationSplitViewVisibility.automatic
+    @ObservedObject private var cv = ControlVilla.shared
 
     private var seccion: Binding<Seccion?> {
         Binding(get: { Seccion(rawValue: seccionGuardada) }, set: { seccionGuardada = ($0 ?? .villa).rawValue })
     }
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnas) {
             List {
                 Section("Villa") {
                     // Clic directo (List(selection:) con AppStorage no respondía en macOS).
@@ -43,6 +45,11 @@ struct VistaPrincipal: View {
                             .listRowBackground(RoundedRectangle(cornerRadius: 6).fill(activa ? Color.accentColor.opacity(0.28) : .clear).padding(.horizontal, 8))
                             .help("Abrir \(s.rawValue)")
                     }
+                    Label("Metro · Línea Circular", systemImage: "tram.fill")
+                        .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                        .onTapGesture { seccionGuardada = Seccion.villa.rawValue; cv.verMetro = true; cv.vistaMetro("arriba") }
+                        .listRowBackground(RoundedRectangle(cornerRadius: 6).fill(cv.verMetro && seccionGuardada == Seccion.villa.rawValue ? Color.accentColor.opacity(0.28) : .clear).padding(.horizontal, 8))
+                        .help("Visión completa del circuito del tren: exterior, interior, desde arriba y cada entrada o salida de las estaciones")
                 }
                 Section("Barrios") {
                     let enBarrios = seccionGuardada == Seccion.barrios.rawValue
@@ -111,6 +118,7 @@ struct VistaPrincipal: View {
             }
         }
         .navigationTitle("Villa de Agentes")
+        .onChange(of: cv.pantallaCompleta) { _, v in withAnimation { columnas = v ? .detailOnly : .all } }
         .navigationSubtitle(almacen.fuente)
         .sheet(isPresented: $ayuda) { VistaAyuda() }
         .sheet(isPresented: $altaAgentes) { VistaAgregarAgente().environmentObject(almacen) }

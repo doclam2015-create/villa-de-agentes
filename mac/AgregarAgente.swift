@@ -41,7 +41,13 @@ enum VillaDemo {
       "casino": {"name": "Gran Casino", "roof": "#c0392b", "wall": "#3b1f4a", "kind": "casino"},
       "museo": {"name": "Museo de la Villa", "roof": "#8c6239", "wall": "#f1ead9", "kind": "museum"},
       "uni": {"name": "Universidad", "roof": "#5b3a29", "wall": "#b5654a", "kind": "university"},
-      "ciencia": {"name": "Centro científico", "roof": "#117a65", "wall": "#e3e8ec", "kind": "science"}
+      "ciencia": {"name": "Centro científico", "roof": "#117a65", "wall": "#e3e8ec", "kind": "science"},
+      "fach": {"name": "Base Aérea", "roof": "#1a5276", "wall": "#dfe4e8", "kind": "airbase"},
+      "armada": {"name": "Base Naval", "roof": "#1a3d5c", "wall": "#e8eef2", "kind": "navalbase"},
+      "ejercito": {"name": "Regimiento", "roof": "#4b5a33", "wall": "#7d8a5c", "kind": "army"},
+      "defensa": {"name": "Ministerio de Defensa", "roof": "#3d4630", "wall": "#e9e4d6", "kind": "defense"},
+      "comisaria": {"name": "Comisaría", "roof": "#1e5631", "wall": "#f3f1ea", "kind": "police"},
+      "gobmar": {"name": "Gobernación Marítima", "roof": "#1a3d5c", "wall": "#f2f4f6", "kind": "maritime"}
      },
      "agentes": [
       {"id": "monitor", "zone": "urg", "name": "Monitor de servicios", "status": "ok", "does": "Ejemplo: comprueba cada 15 minutos que tus servicios web respondan.", "sched": "Cada 15 min"},

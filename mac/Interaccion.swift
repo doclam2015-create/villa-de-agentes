@@ -82,11 +82,37 @@ struct TarjetaElemento: View {
                 .help("Abre Ajustes → Almacenamiento (lo decides tú)")
             Button("Almacenamiento") { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.settings.Storage")!) }
                 .help("Abre Ajustes → Almacenamiento")
+        case _ where e == "energia" || e.hasPrefix("ener-"):
+            let id = ["ener-nuclear": "ener", "ener-hidro": "ener", "ener-solar": "ener", "ener-geo": "ener", "ener-eolica": "isp", "ener-isp": "isp",
+                      "ener-clima": "clima", "ener-residuos": "basura", "ener-astro": "astro", "ener-agua": "agua"][e]
+            if let id { Button("Pizarra del agente") { c.seleccionar(id) }.help("Abre la pizarra del agente de esta planta") }
+            if e == "ener-residuos" {
+                Button("Almacenamiento") { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.settings.Storage")!) }.help("Abre Ajustes → Almacenamiento para revisar qué ocupa espacio")
+                Button("Optimizador") { c.seleccionar("opt") }.help("Pizarra del Optimizador del Mac")
+            } else if e == "ener-astro" {
+                Button("Cielo Nocturno") { NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Cielo Nocturno.app")) }.help("Abre la app Cielo Nocturno")
+            } else if e == "ener-isp" || e == "ener-eolica" {
+                Button("Vigilante de red") { c.seleccionar("red") }.help("Pizarra del Vigilante de red del Mac")
+            } else if e != "energia" {
+                Button("Salud del Mac") { c.seleccionar("salud") }.help("Pizarra de Salud del Mac: Time Machine, batería y actualizaciones")
+            }
+            if e != "energia" { Button("Ver la isla") { c.elemento = nil; c.irBarrio("energia") }.help("Vuela sobre toda la Isla de Energía") }
+            else { Button("Agentes de la isla") { c.elemento = nil; c.abrirDirectorio("energia") }.help("Directorio con los agentes de la isla") }
         case "camion":
             Button("Cajero") { c.seleccionar("cajero") }.help("Pizarra del Cajero: suscripciones y apps de pago")
             Button("Ver el mall") { c.elemento = nil; c.irBarrio("mall") }
         case "aeropuerto", "avion":
             Button("Ver el aeropuerto") { c.elemento = nil; c.irBarrio("aeropuerto") }.help("Vuela sobre la pista, la terminal y la torre")
+        case "ministerio":
+            Button("Vigilante de seguridad") { c.seleccionar("seg") }
+            Button("Flota") { c.mostrarElemento("flota-portaaviones"); c.coord?.irFlota() }
+            Button("Base de defensa") { c.elemento = nil; c.irBarrio("fach") }
+        case "armada", "ejercito", "jet", "fach", "gobmar":
+            Button("Ministerio de Defensa") { c.elemento = nil; c.irBarrio("defensa") }
+            Button("Vigilante de seguridad") { c.seleccionar("seg") }
+        case "comisaria":
+            Button("Revisor de agentes") { c.seleccionar("revisor") }
+            Button("Ver la comisaría") { c.elemento = nil; c.irBarrio("comisaria") }
         case "bus":
             Button("Aeropuerto") { c.elemento = nil; c.irBarrio("aeropuerto") }
             Button("Trade Center") { c.elemento = nil; c.irBarrio("trade") }
@@ -116,6 +142,9 @@ struct TarjetaElemento: View {
         let vehiculos = c.coord?.conteoVehiculos ?? 0
         let hora = Date().formatted(date: .omitted, time: .shortened)
         switch e {
+        case _ where e.hasPrefix("metro"):
+            let r = c.coord?.reporteMetro(e) ?? (titulo: "Metro de la Villa", quien: "Línea Circular", texto: "")
+            return Reporte(icono: "tram.fill", color: Color(red: 0.82, green: 0.19, blue: 0.17), titulo: r.titulo, quien: r.quien, texto: r.texto)
         case "helicoptero":
             return Reporte(icono: "airplane.circle.fill", color: Color(red: 0.23, green: 0.29, blue: 0.18), titulo: "Helicóptero Halcón 1",
                            quien: "Piloto · Teniente Rojas, defensa aérea",
@@ -178,6 +207,51 @@ struct TarjetaElemento: View {
             return Reporte(icono: "truck.box.fill", color: .orange, titulo: "Camión Villa Express",
                            quien: "Repartidor · Centro comercial",
                            texto: "Traigo mercadería al Centro comercial desde tierra firme y desde el puerto, y descargo en el andén. Caja del mall: \(caja).")
+        case _ where e == "energia" || e.hasPrefix("ener-"):
+            func res(_ id: String) -> Resultado? { almacen.resultados[id] }
+            func v(_ id: String, _ k: String) -> Double { res(id)?.serie?[k] ?? 0 }
+            func linea(_ id: String, _ prefijo: String) -> String { res(id)?.detalle?.first { $0.hasPrefix(prefijo) } ?? "" }
+            let sin = "Sin lectura todavía: el agente aún no corre."
+            func color(_ id: String) -> Color { res(id)?.status == "warn" ? .orange : .green }
+            switch e {
+            case "ener-nuclear":
+                return Reporte(icono: "atom", color: color("ener"), titulo: "Central nuclear · CPU", quien: "Jefa de reactor · Central de Energía",
+                               texto: res("ener") == nil ? sin : "Núcleo del Mac al \(Int(v("ener", "cpu"))) % de carga. \(linea("ener", "Más CPU")). \(linea("ener", "Temperatura del sistema")).")
+            case "ener-hidro":
+                return Reporte(icono: "drop.fill", color: color("ener"), titulo: "Central hidroeléctrica · memoria", quien: "Operador del embalse · Central de Energía",
+                               texto: res("ener") == nil ? sin : "Caudal de memoria: \(Int(v("ener", "memoria_libre"))) % libre. El embalse de reserva (swap) tiene \(String(format: "%.1f", v("ener", "swap_gb"))) GB.")
+            case "ener-solar":
+                return Reporte(icono: "sun.max.fill", color: color("ener"), titulo: "Parque solar · batería", quien: "Técnico del parque · Central de Energía",
+                               texto: res("ener") == nil ? sin : "\(linea("ener", "Batería:")). \(linea("ener", "Salud de batería")). \(linea("ener", "Cargador")) \(linea("ener", "Consumo")) \(linea("ener", "Modo de bajo consumo")).")
+            case "ener-geo":
+                return Reporte(icono: "flame.fill", color: color("ener"), titulo: "Central geotérmica · disco", quien: "Geóloga · Central de Energía",
+                               texto: res("ener") == nil ? sin : "\(linea("ener", "Disco:")). \(linea("ener", "Disco externo")). \(linea("ener", "Encendido")).")
+            case "ener-eolica", "ener-isp":
+                return Reporte(icono: e == "ener-isp" ? "antenna.radiowaves.left.and.right" : "wind", color: color("isp"),
+                               titulo: e == "ener-isp" ? "Proveedora de Red · internet" : "Parque eólico · red", quien: "Ingeniero de red · Proveedora de Red",
+                               texto: res("isp").map { ($0.detalle ?? []).prefix(4).joined(separator: " · ") } ?? sin)
+            case "ener-clima":
+                return Reporte(icono: "cloud.sun.fill", color: color("clima"), titulo: "Estación meteorológica", quien: "Meteoróloga de turno",
+                               texto: res("clima").map { ($0.detalle ?? []).prefix(5).joined(separator: " · ") } ?? sin)
+            case "ener-residuos":
+                return Reporte(icono: "trash.fill", color: color("basura"), titulo: "Planta de residuos y escombros", quien: "Jefe de planta · limpieza del Mac",
+                               texto: res("basura").map { "\($0.resumen ?? ""). " + ($0.detalle ?? []).prefix(4).joined(separator: " · ") + ". No borro nada sin tu orden." } ?? sin)
+            case "ener-astro":
+                return Reporte(icono: "moon.stars.fill", color: .indigo, titulo: "Observatorio astronómico", quien: "Astrónoma residente",
+                               texto: res("astro").map { ($0.detalle ?? []).prefix(5).joined(separator: " · ") } ?? sin)
+            case "ener-agua":
+                return Reporte(icono: "drop.circle.fill", color: color("agua"), titulo: "Planta de agua potable · respaldos", quien: "Jefa de planta · control de calidad de respaldos",
+                               texto: res("agua").map { "\($0.resumen ?? ""). " + ($0.detalle ?? []).prefix(4).joined(separator: " · ") } ?? sin)
+            case "ener-terreno":
+                return Reporte(icono: "square.dashed", color: .gray, titulo: "Terreno disponible", quien: "Administración de la isla",
+                               texto: "Lote cercado y nivelado, con acceso desde la circunvalación: reservado para una nueva dependencia, edificio o industria.")
+            default:
+                let ids = ["ener", "clima", "isp", "basura", "astro", "agua"]
+                let mal = ids.compactMap { id in res(id)?.status == "warn" ? ag.first { $0.id == id }?.nombre : nil }
+                return Reporte(icono: "bolt.fill", color: mal.isEmpty ? .green : .orange, titulo: "Isla de Energía y Servicios", quien: "Administradora de la isla",
+                               texto: "Centrales nuclear (CPU), hidroeléctrica (memoria), solar (batería), geotérmica (disco) y eólica (red); agua potable, meteorología, red, residuos y observatorio. " +
+                                      (mal.isEmpty ? "Todo operativo." : "En atención: \(mal.joined(separator: ", ")).") + " \(res("ener")?.resumen ?? "")")
+            }
         case "aeropuerto":
             return Reporte(icono: "airplane", color: .blue, titulo: "Aeropuerto Internacional Villa",
                            quien: "Torre de control · Controladora Soto",
@@ -188,6 +262,35 @@ struct TarjetaElemento: View {
         case "bus":
             return Reporte(icono: "bus.fill", color: .purple, titulo: "Bus de enlace", quien: "Conductor · línea Villa–Islas",
                            texto: "Salgo del paradero junto al anillo, cruzo el pedraplén y doy la vuelta en la isla. Tránsito \(c.coord?.estadoTransito ?? "normal").")
+        case "ministerio", "armada", "ejercito", "jet", "comisaria", "fach", "gobmar":
+            func est(_ id: String) -> String {
+                guard let a = ag.first(where: { $0.id == id }) else { return "" }
+                return "\(a.nombre): \(a.etiquetaEstado.lowercased())"
+            }
+            let mando = ["seg", "opt", "salud", "resp", "red"].map(est).filter { !$0.isEmpty }.joined(separator: " · ")
+            switch e {
+            case "ministerio":
+                return Reporte(icono: "shield.checkered", color: alerta ? .red : .green, titulo: "Ministerio de Defensa", quien: "Ministra de Defensa · sede de gobierno",
+                               texto: "En enlace permanente con la Fuerza Aérea, la Armada y el Ejército, y con los agentes de seguridad del Mac. \(mando). Seguridad: \(segTxt)")
+            case "armada":
+                return Reporte(icono: "ferry.fill", color: .blue, titulo: "Base Naval · Armada de la Villa", quien: "Comandante de la base",
+                               texto: "Fragata, corbeta, patrullera y submarino atracados; la flota del portaaviones patrulla mar adentro. Dependemos de la Gobernación Marítima del puerto, que depende del Ministerio de Defensa. \(mando).")
+            case "ejercito":
+                return Reporte(icono: "shield.lefthalf.filled", color: .green, titulo: "Regimiento · Ejército de la Villa", quien: "Comandante del regimiento",
+                               texto: (c.coord?.nocheTranquila == true ? "Noche tranquila: la tropa descansa en los cuarteles y los blindados quedan en el parque; guardia en el acceso y un jeep de ronda." : "Tropa formada, blindados en patrulla y guardia en el acceso de la base.") + " Coordinamos con el Ministerio de Defensa. \(alerta ? "En alerta: " + segTxt : "Sin novedad.")")
+            case "fach":
+                return Reporte(icono: "airplane.circle.fill", color: alerta ? .red : .blue, titulo: "Base Aérea · Fuerza Aérea de la Villa", quien: "Comandante de la base",
+                               texto: "Junto al aeropuerto: pista propia, refugios, radar y cazas en patrulla. Enlazada con el Ministerio de Defensa y con los agentes de seguridad del Mac. \(mando).")
+            case "gobmar":
+                return Reporte(icono: "water.waves", color: .blue, titulo: "Gobernación Marítima del Puerto", quien: "Gobernador marítimo",
+                               texto: "Del Ministerio de Defensa dependemos nosotros, y de nosotros la Base Naval y la capitanía del puerto. Tránsito marítimo y flota en orden. \(mando).")
+            case "jet":
+                return Reporte(icono: "airplane", color: alerta ? .red : .gray, titulo: "Caza de la Fuerza Aérea", quien: "Piloto · Base Aérea de la Villa",
+                               texto: alerta ? "¡Despegue de alerta! \(segTxt)" : "Patrulla de rutina sobre el mar, enlazada con el radar de la base y el Ministerio de Defensa. Espacio aéreo despejado.")
+            default:
+                return Reporte(icono: "light.beacon.max.fill", color: .green, titulo: "Comisaría · Carabineros de la Villa", quien: "Sargento de guardia",
+                               texto: "Patrullas en el anillo y motoristas en el cruce. Tránsito \(c.coord?.estadoTransito ?? "normal"): \(vehiculos) vehículos. \(novedad)")
+            }
         case "caleta":
             return Reporte(icono: "fish.fill", color: .blue, titulo: "Caleta de pescadores", quien: "Pescador · don Lucho",
                            texto: "Salimos al alba y volvemos con pescado fresco al puesto del muelle. Hoy el mar está tranquilo, \(hora).")
@@ -197,6 +300,26 @@ struct TarjetaElemento: View {
         case "marina":
             return Reporte(icono: "sailboat.fill", color: .teal, titulo: "Marina Villa", quien: "Jefe de muelle",
                            texto: "Yates, veleros y lanchas amarrados en el muelle flotante; una lancha rápida pasea frente a la costa.")
+        case "restaurante":
+            return Reporte(icono: "fork.knife", color: .red, titulo: "Restaurante gourmet El Mirador", quien: "Chef ejecutivo",
+                           texto: "Cocina de autor con productos del mar de la caleta y vinos del valle. Terraza bajo la pérgola iluminada; reservas para la cena, \(hora).")
+        case "cafeteria":
+            return Reporte(icono: "cup.and.saucer.fill", color: .green, titulo: "Café del Valle · cafetería gourmet", quien: "Barista",
+                           texto: "Café de especialidad tostado en casa, pastelería fina y terraza con quitasoles. Abierto desde temprano hasta la noche.")
+        case "iglesia":
+            let consejos = ["Respira 4 segundos, retén 7 y exhala en 8; repítelo cuatro veces antes de decidir algo difícil.",
+                            "Duerme lo que tu cuerpo pide: el descanso también es parte del trabajo.",
+                            "Agradece tres cosas de hoy antes de dormir.",
+                            "Haz una pausa de cinco minutos cada hora: levántate, estírate y mira lejos.",
+                            "No todo lo urgente es importante; elige una sola prioridad para mañana.",
+                            "Llama a alguien que quieres solo para saber cómo está.",
+                            "Camina veinte minutos al aire libre; la mente se ordena al andar.",
+                            "Lo que no depende de ti, suéltalo; lo que depende de ti, hazlo hoy.",
+                            "Sé amable contigo mismo: tratarse bien no es debilidad.",
+                            "Desconecta las pantallas una hora antes de dormir."]
+            let dia = Calendar.current.ordinality(of: .hour, in: .year, for: Date()) ?? 0
+            return Reporte(icono: "leaf.fill", color: .purple, titulo: "Iglesia de la Villa · relax y consejos de vida", quien: "Capellán de la Villa",
+                           texto: "Un lugar de calma para respirar y pensar. Consejo de esta hora: \(consejos[dia % consejos.count]) El jardín de meditación está abierto día y noche.")
         case "letrero":
             return Reporte(icono: "sparkles", color: .white, titulo: "SILICON VILLA", quien: "Valle de los agentes",
                            texto: "Bienvenido a Silicon Villa, el valle de los agentes del Alcalde: \(ag.count) agentes, \(activos) activos. \(novedad)")

@@ -14,8 +14,8 @@ import AppKit
 @MainActor
 final class PuertoYFlota {
     nonisolated static let ang: CGFloat = -0.48                 // rumbo del puerto: entre el cuartel de bomberos y la Bodega del Mac
-    nonisolated static let centro = CGPoint(x: sin(ang) * 69, y: cos(ang) * 69)    // capitanía (barrio «puerto»)
-    nonisolated static let flotaAng: CGFloat = 2.75             // la flota patrulla al otro lado de la isla, frente a la cámara
+    nonisolated static let centro = w(0, 70.6)    // capitanía (barrio «puerto»)
+    nonisolated static let flotaAng: CGFloat = 1.85             // la flota patrulla frente a la cámara, entre el Regimiento y la Isla de Energía
 
     /// Buques de la escolta: cada uno lo comanda un agente protector u optimizador.
     nonisolated static let buques: [(id: String, nombre: String)] = [("seg", "Fragata Antivirus"), ("opt", "Destructor Optimizador"),
@@ -65,7 +65,7 @@ final class PuertoYFlota {
     nonisolated static let abreKelvin: CGFloat = tan(19.47 * .pi / 180)     // ángulo de Kelvin: toda estela se abre así
     private static var cacheEspuma: CGImage?
     private var portaaviones = SCNNode(), escoltas: [(n: SCNNode, lat: CGFloat, fwd: CGFloat)] = []
-    private var fase: CGFloat = 0, radioFlota: CGFloat = 185, rumboFlota: CGFloat = 0
+    private var fase: CGFloat = 0, radioFlota: CGFloat = 200, rumboFlota: CGFloat = 0
     private var ultimoEstado: CFTimeInterval = 0
 
     // Materiales compartidos (pocos materiales = pocos dibujos)
@@ -127,7 +127,7 @@ final class PuertoYFlota {
             g.addChildNode(nodo(SCNSphere(radius: 0.16), luz, y: 1.4, x: x, z: z))
         }
         // Bodegas portuarias de techo curvo, a los costados de la capitanía
-        for (x, letrero) in [(CGFloat(-18), "IMPORTACIÓN"), (18, "EXPORTACIÓN")] {
+        for (x, letrero) in [(CGFloat(-19.5), "IMPORTACIÓN"), (19.5, "EXPORTACIÓN")] {
             let muro = Mat.textura(.estuco, repetir: 3, tinte: x < 0 ? "#c7d3dc" : "#d8cfc0")
             g.addChildNode(nodo(SCNBox(width: 10, height: 4, length: 7, chamferRadius: 0.05), muro, y: 2, x: x, z: 71))
             let techo = nodo(SCNCylinder(radius: 3.65, height: 10.3), Mat.pbr(NSColor(Color(hex: "#8d99a3")), rugosidad: 0.5, metal: 0.6), y: 3.6, x: x, z: 71)
@@ -160,14 +160,11 @@ final class PuertoYFlota {
         for (x0, x1) in [(CGFloat(-29), CGFloat(-19.5)), (19.5, 29)] {
             var x = x0
             while x < x1 {
-                var z: CGFloat = 79.2
-                while z < 86 {
-                    let alto = 1 + Int(azar.real() * 2.99)
-                    for k in 0..<alto {
-                        let m = contenedores[Int(azar.real() * CGFloat(contenedores.count - 1) + 0.5)]
-                        g.addChildNode(nodo(SCNBox(width: 2.6, height: 1.25, length: 1.2, chamferRadius: 0.02), m, y: 0.68 + CGFloat(k) * 1.27, x: x + 1.3, z: z))
-                    }
-                    z += 1.4
+                // Contenedores de 20 pies a escala real (6,1 × 2,44 × 2,6 m), apilados hasta 3
+                let alto = 1 + Int(azar.real() * 2.99)
+                for k in 0..<alto {
+                    let m = contenedores[Int(azar.real() * CGFloat(contenedores.count - 1) + 0.5)]
+                    g.addChildNode(nodo(SCNBox(width: 2.44, height: 2.6, length: 6.1, chamferRadius: 0.02), m, y: 1.35 + CGFloat(k) * 2.62, x: x + 1.3, z: 82.6))
                 }
                 x += 2.9
             }
@@ -245,7 +242,7 @@ final class PuertoYFlota {
             let carro = SCNNode(); carro.position = SCNVector3(14.5, 9.7, z)
             carro.addChildNode(nodo(SCNBox(width: 1.3, height: 0.5, length: 1.3, chamferRadius: 0.05), grisOscuro))
             carro.addChildNode(nodo(SCNCylinder(radius: 0.03, height: 4.6), acero, y: -2.5))
-            carro.addChildNode(nodo(SCNBox(width: 2.6, height: 1.25, length: 1.2, chamferRadius: 0.02), contenedores[k == 0 ? 1 : 3], y: -5.4))
+            carro.addChildNode(nodo(SCNBox(width: 2.44, height: 2.6, length: 6.1, chamferRadius: 0.02), contenedores[k == 0 ? 1 : 3], y: -6.1))
             let ida = SCNAction.moveBy(x: 7.5, y: 0, z: 0, duration: 7); ida.timingMode = .easeInEaseOut
             carro.runAction(.repeatForever(.sequence([.wait(duration: 2 + Double(k) * 3), ida, .wait(duration: 2.5), ida.reversed(), .wait(duration: 1)])))
             raiz.addChildNode(carro)
@@ -253,7 +250,7 @@ final class PuertoYFlota {
         }
     }
 
-    /// Faro a rayas en la punta del rompeolas, con haz giratorio. Su linterna toma el color del Vigía de la App Store.
+    /// Faro a rayas en la punta del rompeolas, con haz giratorio. Su linterna toma el color del Vigía App Store.
     private func montarFaro() {
         let raiz = SCNNode(); raiz.name = "elem:puerto-faro"
         let base = PuertoYFlota.w(25, 126); raiz.position = SCNVector3(base.x, 0, base.y)
@@ -279,7 +276,7 @@ final class PuertoYFlota {
         haz.addChildNode(r1)
         haz.runAction(.repeatForever(.rotateBy(x: 0, y: .pi * 2, z: 0, duration: 9)))
         raiz.addChildNode(haz)
-        let e = etiqueta("Faro · Vigía de la App Store", y: 14.5, grande: false, icono: "binoculars.fill", color: .systemTeal)
+        let e = etiqueta("Faro · Vigía App Store", y: 14.5, grande: false, icono: "binoculars.fill", color: .systemTeal)
         raiz.addChildNode(e)
         escena.rootNode.addChildNode(raiz)
     }
@@ -428,15 +425,21 @@ final class PuertoYFlota {
         // Carguero junto al muelle B, proa al mar
         _ = pieza("elem:puerto-carguero") { g in
             let b = SCNNode(); b.position = SCNVector3(20.6, 0, 100); g.addChildNode(b)
+            if let m = Modelos.nodo("carguero", largo: 26) {   // portacontenedores descargado
+                m.childNodes[0].position.y = -1.5; b.addChildNode(m)
+                b.addChildNode(nodo(SCNSphere(radius: 0.24), luzDeEstado("sincmac"), y: 9.3, z: -8.9))
+                b.addChildNode(nodo(SCNBox(width: 0.12, height: 0.12, length: 6, chamferRadius: 0), acero, y: 0.3, x: -3.4, z: 2))     // amarras
+                return
+            }
             b.addChildNode(casco(largo: 26, manga: 6, alto: 2.8, proa: 5, Mat.pbr(NSColor(Color(hex: "#1d3c5a")), rugosidad: 0.6), y: 0.1))
             b.addChildNode(casco(largo: 26.1, manga: 6.1, alto: 0.6, proa: 5, rojo, y: -0.9))
             b.addChildNode(nodo(SCNBox(width: 5.4, height: 0.15, length: 19, chamferRadius: 0), grisOscuro, y: 1.55, z: 0.5))
             var azar = Azar(semilla: 11)
-            for fila in 0..<5 { for col in 0..<3 {
-                let alto = 1 + Int(azar.real() * 2.99)
+            for fila in 0..<3 { for col in 0..<2 {      // contenedores reales de 6,1 × 2,44 × 2,6 m
+                let alto = 1 + Int(azar.real() * 1.99)
                 for k in 0..<alto {
                     let m = contenedores[Int(azar.real() * CGFloat(contenedores.count - 1) + 0.5)]
-                    b.addChildNode(nodo(SCNBox(width: 1.5, height: 1.0, length: 3.0, chamferRadius: 0.02), m, y: 2.15 + CGFloat(k) * 1.02, x: -1.65 + CGFloat(col) * 1.65, z: 8 - CGFloat(fila) * 3.2))
+                    b.addChildNode(nodo(SCNBox(width: 2.44, height: 2.6, length: 6.1, chamferRadius: 0.02), m, y: 2.95 + CGFloat(k) * 2.62, x: -1.25 + CGFloat(col) * 2.5, z: 8 - CGFloat(fila) * 6.4))
                 }
             } }
             b.addChildNode(nodo(SCNBox(width: 5.2, height: 4.2, length: 3.2, chamferRadius: 0.05), blanco, y: 3.7, z: -10.4))      // puente de mando a popa
@@ -450,6 +453,13 @@ final class PuertoYFlota {
         // Tanquero junto al muelle A
         _ = pieza("elem:puerto-tanquero") { g in
             let b = SCNNode(); b.position = SCNVector3(-20.6, 0, 101); g.addChildNode(b)
+            if let m = Modelos.nodo("tanquero", largo: 24) {
+                m.childNodes[0].position.y = -1.5; b.addChildNode(m)
+                b.addChildNode(nodo(SCNSphere(radius: 0.24), luzDeEstado("mem"), y: 8.8, z: 7.7))
+                let mg = nodo(SCNCylinder(radius: 0.14, height: 3.6), negro, y: 1.2, x: 3.4, z: 1); mg.eulerAngles.z = 1.25   // manguera de carga
+                b.addChildNode(mg)
+                return
+            }
             b.addChildNode(casco(largo: 24, manga: 5.5, alto: 2.6, proa: 4.5, Mat.pbr(NSColor(calibratedWhite: 0.13, alpha: 1), rugosidad: 0.55), y: 0.1))
             b.addChildNode(casco(largo: 24.1, manga: 5.6, alto: 0.6, proa: 4.5, rojo, y: -0.85))
             b.addChildNode(nodo(SCNBox(width: 5, height: 0.15, length: 17, chamferRadius: 0), Mat.pbr(NSColor(Color(hex: "#7c3b2a")), rugosidad: 0.8), y: 1.45, z: 1))
@@ -470,6 +480,11 @@ final class PuertoYFlota {
         etiquetaEn(-20.6, 101, y: 10, "Tanquero · Proveedor de memoria", icono: "fuelpump.fill", color: .systemOrange)
         // Lancha correo: se arma en sus propias coordenadas (proa +z) porque navega
         let b = SCNNode()
+        if let m = Modelos.nodo("pesquero2", largo: 6) {
+            m.childNodes[0].position.y = -0.4; b.addChildNode(m)
+            b.addChildNode(nodo(SCNSphere(radius: 0.13), luzDeEstado("trad"), y: 3.4, z: -1.66))
+            b.addChildNode(nodo(SCNSphere(radius: 0.11), luzDeEstado("sms"), y: 2.4, x: 0.5, z: -1.66))
+        } else {
         b.addChildNode(casco(largo: 6, manga: 2.1, alto: 1.1, proa: 1.6, blanco, y: -0.15))
         b.addChildNode(casco(largo: 6.05, manga: 2.15, alto: 0.25, proa: 1.6, Mat.pbr(NSColor(Color(hex: "#1f6fb2"))), y: -0.55))
         b.addChildNode(nodo(SCNBox(width: 1.5, height: 1.0, length: 2.0, chamferRadius: 0.15), Mat.pbr(NSColor(Color(hex: "#1f6fb2"))), y: 0.9, z: -0.4))
@@ -477,6 +492,7 @@ final class PuertoYFlota {
         b.addChildNode(nodo(SCNCylinder(radius: 0.04, height: 1.3), acero, y: 2.0, z: -0.8))
         b.addChildNode(nodo(SCNSphere(radius: 0.13), luzDeEstado("trad"), y: 2.7, z: -0.8))
         b.addChildNode(nodo(SCNSphere(radius: 0.11), luzDeEstado("sms"), y: 2.2, x: 0.5, z: -0.8))
+        }
         let plano = b.flattenedClone()
         lancha.addChildNode(plano)
         lancha.addChildNode(etiqueta("Lancha correo", y: 4, grande: false, icono: "envelope.fill", color: .systemIndigo))
@@ -531,6 +547,7 @@ final class PuertoYFlota {
         b.addChildNode(nodo(SCNSphere(radius: 0.3), luzAlmirante, y: 14.4, x: 6.2, z: -4))
         // Aviones en cubierta
         for (x, zz, g) in [(CGFloat(-2.5), CGFloat(20), CGFloat(0.4)), (-1, 15, 0.4), (3.5, 10, -0.5), (3.5, 5, -0.5), (-7.5, 0, 0.9), (-7.5, -4.5, 0.9)] {
+            if let m = Modelos.nodo("caza", largo: 3.6) { m.position = SCNVector3(x, 3.5, zz); m.eulerAngles.y = g; b.addChildNode(m); continue }
             let j = SCNNode(); j.position = SCNVector3(x, 3.75, zz); j.eulerAngles.y = g
             j.addChildNode(nodo(SCNBox(width: 0.55, height: 0.45, length: 3.4, chamferRadius: 0.2), Mat.pbr(NSColor(Color(hex: "#8a939c")), rugosidad: 0.4, metal: 0.4)))
             j.addChildNode(nodo(SCNBox(width: 2.8, height: 0.08, length: 1.1, chamferRadius: 0.03), Mat.pbr(NSColor(Color(hex: "#8a939c")), rugosidad: 0.4, metal: 0.4), z: -0.3))
@@ -550,15 +567,19 @@ final class PuertoYFlota {
         estelaDe(portaaviones, manga: 9, largo: 90, popa: -28)
         // Escolta: cada buque es un agente protector u optimizador
         let buques: [(id: String, nombre: String, icono: String, color: NSColor, lat: CGFloat, fwd: CGFloat, sub: Bool)] = [
-            ("seg", "Fragata Antivirus", "lock.shield.fill", .systemRed, 0, 36, false),
+            ("seg", "Fragata Antivirus", "lock.shield.fill", .systemRed, 0, 50, false),
             ("opt", "Destructor Optimizador", "speedometer", .systemOrange, -20, 8, false),
             ("salud", "Corbeta Salud del Mac", "heart.text.square.fill", .systemPink, 20, 8, false),
-            ("resp", "Patrullero Respaldos", "externaldrive.fill.badge.timemachine", .systemGreen, 0, -34, false),
-            ("red", "Submarino Vigía de red", "network", .systemTeal, -15, -22, true)]
+            ("resp", "Patrullero Respaldos", "externaldrive.fill.badge.timemachine", .systemGreen, 0, -50, false),
+            ("red", "Submarino Vigía de red", "network", .systemTeal, -12, -48, true)]
         for e in buques {
             let n = SCNNode(); n.name = "elem:flota-\(e.id)"
             let c = SCNNode()
-            if e.sub {
+            let modelo = Modelos.nodo(e.sub ? "submarino" : "buque", largo: e.sub ? 18 : 22)
+            if let m = modelo {   // modelos descargados; la luz de estado queda en lo alto de la vela o del mástil
+                m.childNodes[0].position.y = e.sub ? -1.26 : -0.44; c.addChildNode(m)
+                c.addChildNode(nodo(SCNSphere(radius: 0.22), luzDeEstado(e.id), y: e.sub ? 4 : 6.2, z: e.sub ? -3.1 : -0.4))
+            } else if e.sub {
                 let tubo = nodo(SCNCapsule(capRadius: 1.3, height: 18), grisOscuro, y: -0.4); tubo.eulerAngles.x = .pi / 2
                 c.addChildNode(tubo)
                 c.addChildNode(nodo(SCNBox(width: 0.9, height: 2.2, length: 3, chamferRadius: 0.4), grisOscuro, y: 1.6, z: 3))
@@ -582,7 +603,7 @@ final class PuertoYFlota {
             Villa3D.Coordinador.hornear(c)
             n.addChildNode(c.flattenedClone())
             if !e.sub {
-                let r = SCNNode(); r.position = SCNVector3(0, 7.3, -0.9)
+                let r = SCNNode(); r.position = SCNVector3(0, modelo != nil ? 5.6 : 7.3, modelo != nil ? -0.4 : -0.9)
                 r.addChildNode(nodo(SCNBox(width: 1.5, height: 0.5, length: 0.08, chamferRadius: 0.02), acero))
                 r.runAction(.repeatForever(.rotateBy(x: 0, y: .pi * 2, z: 0, duration: 3)))
                 n.addChildNode(r)
@@ -613,22 +634,42 @@ final class PuertoYFlota {
         let t = CGFloat(ahora)
         // Flota: elipse frente a la isla; en alerta, más cerca y más rápido
         // Lejos de la costa (84 m): en alerta se acerca, pero el buque más cercano queda a unos 20 m de la playa.
-        radioFlota += ((alerta ? 160 : 185) - radioFlota) * min(1, dt * 0.08)
-        fase += dt * 2 * .pi / (alerta ? 150 : 280)
+        // Derrotero: elipse ancha (semiejes 55 × 40 m, radio de giro mínimo ≈ 29 m) recorrida a velocidad
+        // constante. Cada buque sigue el MISMO derrotero desplazado por su distancia a proa/popa y de costado, con
+        // la proa en la tangente de su propio punto: todos avanzan siempre hacia adelante, como una formación real,
+        // en vez de girar como un bloque rígido (antes los de popa retrocedían en las curvas cerradas).
+        radioFlota += ((alerta ? 178 : 200) - radioFlota) * min(1, dt * 0.08)
         let a = PuertoYFlota.flotaAng
         let T = CGPoint(x: cos(a), y: -sin(a)), R = CGPoint(x: sin(a), y: cos(a))
-        let A: CGFloat = 40, B: CGFloat = 10
-        let c = CGPoint(x: R.x * radioFlota + T.x * A * cos(fase) + R.x * B * sin(fase), y: R.y * radioFlota + T.y * A * cos(fase) + R.y * B * sin(fase))
-        let d = CGPoint(x: -T.x * A * sin(fase) + R.x * B * cos(fase), y: -T.y * A * sin(fase) + R.y * B * cos(fase))
-        rumboFlota = atan2(d.x, d.y)
-        let F = CGPoint(x: sin(rumboFlota), y: cos(rumboFlota)), S = CGPoint(x: cos(rumboFlota), y: -sin(rumboFlota))
+        let A: CGFloat = 55, B: CGFloat = 40
+        func punto(_ f: CGFloat) -> CGPoint {
+            CGPoint(x: R.x * radioFlota + T.x * A * cos(f) + R.x * B * sin(f), y: R.y * radioFlota + T.y * A * cos(f) + R.y * B * sin(f))
+        }
+        func tangente(_ f: CGFloat) -> CGPoint {
+            CGPoint(x: -T.x * A * sin(f) + R.x * B * cos(f), y: -T.y * A * sin(f) + R.y * B * cos(f))
+        }
+        func rapidez(_ f: CGFloat) -> CGFloat { let d = tangente(f); return max(1, hypot(d.x, d.y)) }
+        let v: CGFloat = alerta ? 2.2 : 1.2        // m/s: una vuelta en ~4 min (~2 en alerta)
+        fase += dt * v / rapidez(fase)
+        /// Pose de un buque `fwd` metros adelante (o atrás) del portaaviones sobre el derrotero y `lat` a estribor.
+        func pose(_ fwd: CGFloat, _ lat: CGFloat) -> (p: CGPoint, rumbo: CGFloat) {
+            var f = fase
+            for _ in 0..<3 { f = fase + fwd / rapidez((fase + f) / 2) }   // distancia medida sobre la curva
+            let c = punto(f), d = tangente(f), rumbo = atan2(d.x, d.y)
+            return (CGPoint(x: c.x + cos(rumbo) * lat, y: c.y - sin(rumbo) * lat), rumbo)
+        }
         let ola = sin(t * 0.7) * 0.06
-        portaaviones.position = SCNVector3(c.x, -0.2 + ola, c.y)
+        let pa = pose(0, 0)
+        rumboFlota = pa.rumbo
+        portaaviones.position = SCNVector3(pa.p.x, -0.2 + ola, pa.p.y)
         portaaviones.eulerAngles = SCNVector3(0, rumboFlota, sin(t * 0.5) * 0.008)
         for (k, e) in escoltas.enumerated() {
-            let p = CGPoint(x: c.x + S.x * e.lat + F.x * e.fwd, y: c.y + S.y * e.lat + F.y * e.fwd)
-            e.n.position = SCNVector3(p.x, -0.1 + sin(t * 0.9 + CGFloat(k)) * 0.08, p.y)
-            e.n.eulerAngles = SCNVector3(0, rumboFlota, sin(t * 0.8 + CGFloat(k)) * 0.02)
+            let q = pose(e.fwd, e.lat)
+            var giro = q.rumbo - CGFloat(e.n.eulerAngles.y)
+            while giro > .pi { giro -= 2 * .pi }; while giro < -.pi { giro += 2 * .pi }
+            e.n.position = SCNVector3(q.p.x, -0.1 + sin(t * 0.9 + CGFloat(k)) * 0.08, q.p.y)
+            // escora hacia fuera de la curva, proporcional a cuánto vira
+            e.n.eulerAngles = SCNVector3(0, CGFloat(e.n.eulerAngles.y) + giro, sin(t * 0.8 + CGFloat(k)) * 0.02 - max(-0.05, min(0.05, giro / max(dt, 0.001) * 0.15)))
         }
         // Lancha correo: recorre su circuito; frena antes de cada parada, arranca suave, sale del amarre en marcha
         // atrás y vira solo cuando está detenida en agua abierta (así nunca barre el muelle con la proa o la popa).
@@ -663,7 +704,7 @@ final class PuertoYFlota {
             e.raiz.opacity += (meta - e.raiz.opacity) * min(1, dt * 0.8)
         }
         // Estelas: siguen la popa de cada barco sobre la superficie del mar y su espuma corre hacia atrás
-        let velFlota = hypot(d.x, d.y) * 2 * .pi / (alerta ? 150 : 280)
+        let velFlota = v
         for e in estelas {
             guard let b = e.barco else { continue }
             if e !== estelaLancha { e.v = velFlota }
@@ -700,7 +741,7 @@ final class PuertoYFlota {
         h.addChildNode(nodo(SCNBox(width: 5.6, height: 3.2, length: 4, chamferRadius: 0.05), muro, y: 1.9))
         h.addChildNode(nodo(SCNBox(width: 5.8, height: 0.3, length: 4.2, chamferRadius: 0), azul, y: 3.6))
         for x: CGFloat in [-1.9, 0, 1.9] { h.addChildNode(nodo(SCNPlane(width: 1.1, height: 1.2), vidrio, y: 2.3, x: x, z: 2.02)) }
-        h.addChildNode(nodo(SCNBox(width: 1.3, height: 1.9, length: 0.06, chamferRadius: 0), vidrio, y: 1.25, z: 2.03))     // puerta
+        h.addChildNode(nodo(SCNBox(width: 1.1, height: 2.1, length: 0.06, chamferRadius: 0), vidrio, y: 1.15, z: 2.03))     // puerta
         // Torre de control del puerto con sala vidriada
         h.addChildNode(nodo(SCNCylinder(radius: 0.9, height: 3.4), blanco, y: 5.4, x: 1.3, z: -0.6))
         h.addChildNode(nodo(SCNCylinder(radius: 1.25, height: 1.2), vidrio, y: 7.7, x: 1.3, z: -0.6))

@@ -6,10 +6,15 @@ import CoreGraphics
 /// (8 direcciones) y se suavizan por línea de vista: nadie atraviesa muros, muebles ni barandas.
 final class Navegacion {
     let celda: CGFloat = 0.3
-    let origen: CGFloat = -205        // cubre la isla principal y las islas del aeropuerto y del distrito
-    let n = 1367
+    let origen: CGFloat = -255        // cubre la isla principal y todas las islas (también la de Energía)
+    let n = 1700
     let margen: CGFloat = 0.28           // radio de una persona
     private(set) var bloq: [Bool]
+    /// Quién bloqueó cada zona (archivo:línea y caja), para que la auditoría física nombre el obstáculo.
+    private(set) var origenes: [(caja: CGRect, quien: String)] = []
+    func quien(_ p: CGPoint) -> String {
+        origenes.last { $0.caja.contains(p) }?.quien ?? "?"
+    }
 
     init() { bloq = Array(repeating: false, count: n * n) }
 
@@ -25,9 +30,10 @@ final class Navegacion {
     func libre(_ p: CGPoint) -> Bool { let (i, j) = celdaDe(p.x, p.y); return libre(i, j) }
 
     /// Rectángulo girado (centro, semiejes, ángulo en Y). valor=false lo libera (puertas, escaleras).
-    func rect(_ cx: CGFloat, _ cz: CGFloat, _ hx: CGFloat, _ hz: CGFloat, _ yaw: CGFloat, valor: Bool = true, margen m: CGFloat? = nil) {
+    func rect(_ cx: CGFloat, _ cz: CGFloat, _ hx: CGFloat, _ hz: CGFloat, _ yaw: CGFloat, valor: Bool = true, margen m: CGFloat? = nil, archivo: String = #fileID, linea: Int = #line) {
         let mm = m ?? margen
         let r = hypot(hx, hz) + mm
+        if valor { origenes.append((CGRect(x: cx - r, y: cz - r, width: 2 * r, height: 2 * r), "\(archivo):\(linea)")) }
         let (i0, j0) = celdaDe(cx - r, cz - r), (i1, j1) = celdaDe(cx + r, cz + r)
         let c = cos(yaw), s = sin(yaw)
         guard max(0, j0) <= min(n - 1, j1), max(0, i0) <= min(n - 1, i1) else { return }
@@ -40,8 +46,9 @@ final class Navegacion {
         }
     }
 
-    func circulo(_ cx: CGFloat, _ cz: CGFloat, _ r: CGFloat, valor: Bool = true) {
+    func circulo(_ cx: CGFloat, _ cz: CGFloat, _ r: CGFloat, valor: Bool = true, archivo: String = #fileID, linea: Int = #line) {
         let rr = r + margen
+        if valor { origenes.append((CGRect(x: cx - rr, y: cz - rr, width: 2 * rr, height: 2 * rr), "\(archivo):\(linea)")) }
         let (i0, j0) = celdaDe(cx - rr, cz - rr), (i1, j1) = celdaDe(cx + rr, cz + rr)
         guard max(0, j0) <= min(n - 1, j1), max(0, i0) <= min(n - 1, i1) else { return }
         for j in max(0, j0)...min(n - 1, j1) {

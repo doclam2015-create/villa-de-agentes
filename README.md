@@ -3,8 +3,9 @@
 Una villa 3D para macOS (SwiftUI + SceneKit) donde cada **agente automático** de tu Mac —un script, un servicio de `launchd`, una tarea en la nube— tiene su oficina, su personaje y su pizarra. Los ves caminar, trabajar y avisar cuando algo necesita atención.
 
 - Isla principal con barrios (hospital, biblioteca, La nube, taller de apps, bodega del Mac), sede de gobierno con audiencia, puerto con barcos y flota protectora, centro comercial, cuartel de bomberos, tránsito con física, día y noche según la hora del Mac.
-- Islas con aeropuerto (vuelos animados) y un distrito con Trade Center, banco, casino, universidad, centro científico y museo de agentes retirados.
-- Costa con caleta de pescadores, balneario y marina; letrero «SILICON VILLA».
+- Islas unidas por puentes: aeropuerto internacional (dos pistas, vuelos coordinados), distrito con Trade Center, banco, casino, universidad, centro científico y museo de agentes retirados, y una isla por rama de defensa (Ejército, Fuerza Aérea junto al aeropuerto y Armada junto al puerto, bajo una Gobernación Marítima y un Ministerio de Defensa), además de una comisaría.
+- Costa con caleta de pescadores en su islote, balneario con bañistas articulados, marina y mar con oleaje en la GPU; letreros «SILICON VILLA».
+- Plano desplegable (botón «Plano») y cámara que llega de frente y busca sola una vista sin edificios que tapen el destino.
 - Pizarras con estado, horario, historial y botón «Ejecutar ahora»; centro de mando con salud del Mac y alarma; paneles de gastos y de tokens con gráficos.
 
 La primera vez se abre con una **villa de ejemplo** (agentes ficticios). Ningún dato sale de tu Mac.
@@ -39,7 +40,7 @@ También puedes editar los archivos directamente en `~/Library/Application Suppo
 
 Estados: `ok`, `fixed`, `warn` (atención), `crit`, `off` (apagado a propósito). Un agente con `plist` se ejecuta con «Ejecutar ahora» (`launchctl kickstart`).
 
-Los identificadores de barrio son fijos porque cada uno tiene su lugar en la isla: `urg`, `cer`, `nube`, `ios`, `mac`, `sede`, `mall`, `puerto`, `aeropuerto`, `trade`, `banco`, `casino`, `museo`, `uni`, `ciencia`. Sus nombres visibles sí se pueden cambiar.
+Los identificadores de barrio son fijos porque cada uno tiene su lugar en la isla: `urg`, `cer`, `nube`, `ios`, `mac`, `sede`, `mall`, `puerto`, `aeropuerto`, `trade`, `banco`, `casino`, `museo`, `uni`, `ciencia`, `fach`, `armada`, `ejercito`, `defensa`, `comisaria`, `gobmar`. Sus nombres visibles sí se pueden cambiar.
 
 ## Privacidad
 
