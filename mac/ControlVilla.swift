@@ -26,6 +26,7 @@ final class ControlVilla: ObservableObject {
     @Published var elemento: String?        // helicóptero, garita, guardia, vehículo… con su reporte
     @Published var verAudiencia = false     // conversación con IA en el despacho
     @Published var verCentro = false        // Centro de mando: salud, recursos, seguridad y alarma
+    @Published var centroCompleto = false   // Centro de mando desplegado a toda la altura de la ventana
     /// Plano de la villa: aparece solo abajo a la izquierda y se pliega a una pestaña (se recuerda entre sesiones).
     @Published var verPlano = (UserDefaults.standard.object(forKey: "verPlano") as? Bool) ?? true { didSet { UserDefaults.standard.set(verPlano, forKey: "verPlano") } }
     @Published var planoAbierto = (UserDefaults.standard.object(forKey: "planoAbierto") as? Bool) ?? true { didSet { UserDefaults.standard.set(planoAbierto, forKey: "planoAbierto") } }
@@ -224,6 +225,15 @@ struct MandoVilla: View {
                         HStack {
                             Label("Centro de mando", systemImage: "gauge.with.dots.needle.bottom.50percent").font(.headline)
                             Spacer()
+                            Button { withAnimation(.easeInOut(duration: 0.25)) { c.centroCompleto.toggle() } } label: {
+                                Label(c.centroCompleto ? "Compactar" : "Desplegar todo",
+                                      systemImage: c.centroCompleto ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                                    .font(.callout.bold())
+                                    .padding(.horizontal, 10).padding(.vertical, 5)
+                                    .background(.quaternary, in: Capsule()).contentShape(Capsule())
+                            }
+                            .buttonStyle(.plain).keyboardShortcut("f", modifiers: [.command, .shift])
+                            .help(c.centroCompleto ? "Volver al tamaño compacto (⇧⌘F)" : "Desplegar el centro de mando a toda la altura de la ventana (⇧⌘F)")
                             Button { c.verCentro = false } label: {
                                 Label("Cerrar", systemImage: "xmark.circle.fill").font(.callout.bold())
                                     .padding(.horizontal, 10).padding(.vertical, 5)
@@ -234,7 +244,7 @@ struct MandoVilla: View {
                         .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 2)
                         ScrollView { CentroMando(defensa: c.coord?.defensaTexto ?? []) }
                     }
-                        .frame(maxHeight: 600)
+                        .frame(maxHeight: c.centroCompleto ? .infinity : 600)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
                         .padding(.trailing, 40)
                         .transition(.move(edge: .top).combined(with: .opacity))
