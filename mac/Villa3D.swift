@@ -95,6 +95,7 @@ struct Villa3D: NSViewRepresentable {
         /// Noche sin emergencia: los agentes «en atención» no cuentan; sí un agente en falla, una alerta de seguridad o el disco o la temperatura del Mac.
         var nocheTranquila: Bool { esNoche && !incidentes.contains { !$0.titulo.hasSuffix("en atención") } }
         private var horaActual = 12, horaLeida: CFTimeInterval = -100
+        private var transitoSimulado: CGFloat = 0   // segundos de tránsito simulado aún no anotados (para el Contralor)
         var tema = "auto"                       // auto (hora del Mac), claro u oscuro
         var nube = Nube()
         // Cámara orbital propia (como OrbitControls de la web): cada valor se acerca suave a su meta.
@@ -415,7 +416,7 @@ struct Villa3D: NSViewRepresentable {
         func ajustarRitmo() {
             guard let v = vista else { return }
             let c = ControlVilla.shared
-            let visible = (v.window?.occlusionState.contains(.visible) ?? false) && !c.pausada && !c.dormida
+            let visible = (v.window?.occlusionState.contains(.visible) ?? false) && !c.pausada && !c.dormida && !c.congelada
             let fps = NSApp.isActive ? 30 : 12
             v.isPlaying = visible
             v.preferredFramesPerSecond = fps
@@ -1440,6 +1441,15 @@ struct Villa3D: NSViewRepresentable {
         }
 
         private func moverTrafico(_ dt: CGFloat, ahora: CFTimeInterval) {
+            // Evidencia para el Contralor: cada minuto de tránsito realmente simulado (en reposo o tapada no corre)
+            // queda en trabajo/transito-simulado.txt; así un «sin atascos» solo cuenta tiempo en que hubo tránsito.
+            transitoSimulado += dt
+            if transitoSimulado >= 60 {
+                let linea = "\(Int(Date().timeIntervalSince1970)) \(Int(transitoSimulado))\n"; transitoSimulado = 0
+                let ruta = Almacen.carpetaLocal + "/trabajo/transito-simulado.txt"
+                if let h = FileHandle(forWritingAtPath: ruta) { h.seekToEndOfFile(); h.write(Data(linea.utf8)); h.closeFile() }
+                else { try? linea.write(toFile: ruta, atomically: true, encoding: .utf8) }
+            }
             // Horas punta (7–9, 13, 18–19 h) con todo el tránsito; de noche casi nadie; el resto, tránsito medio.
             if ahora - horaLeida > 20 { horaLeida = ahora; horaActual = Calendar.current.component(.hour, from: Date()) }
             let h = horaActual
@@ -1478,7 +1488,13 @@ struct Villa3D: NSViewRepresentable {
                     // si todos los que lo frenan también están detenidos, sigue el de mayor índice. Y nadie espera más de 20 s.
                     else if (v.esperando > 4 && bloqueadores.allSatisfy { $0.element.detenido && $0.element.esperando > 2.5 && $0.offset < i })
                                 || v.esperando > 20 {
-                        let nota = "\(Date()) destrabado \(v.raiz.name ?? "?") tras \(Int(v.esperando)) s en (\(Int(v.pos.x)), \(Int(v.pos.y)))\n"
+                        // Evidencia para el Contralor: quién lo frenaba, dónde estaba y si también estaba detenido
+                        func frenan(_ o: Vehiculo) -> String {     // a quien lo frena, quién lo frenaba a su vez (la cadena)
+                            let suyos = visibles.filter { $0.element !== o && estorba(o, $0.element) }.map { "\($0.element.raiz.name ?? "?")#\($0.offset)" }
+                            return suyos.isEmpty ? "" : " ← " + suyos.joined(separator: ",")
+                        }
+                        let quien = bloqueadores.map { "\($0.element.raiz.name ?? "?")#\($0.offset)@(\(Int($0.element.pos.x)),\(Int($0.element.pos.y)))\($0.element.detenido ? " detenido" : "")" + frenan($0.element) }.joined(separator: "; ")
+                        let nota = "\(Date()) destrabado \(v.raiz.name ?? "?")#\(i) tras \(Int(v.esperando)) s en (\(Int(v.pos.x)), \(Int(v.pos.y))) por: \(quien)\n"
                         if let h = FileHandle(forWritingAtPath: Almacen.carpetaLocal + "/trabajo/desatascos.txt") { h.seekToEndOfFile(); h.write(Data(nota.utf8)); h.closeFile() }
                         else { try? nota.write(toFile: Almacen.carpetaLocal + "/trabajo/desatascos.txt", atomically: true, encoding: .utf8) }
                         v.liberado = 2.5; v.esperando = 0
@@ -1486,6 +1502,7 @@ struct Villa3D: NSViewRepresentable {
                 } else { v.esperando = 0; v.detenido = false }
             }
             for (_, v) in visibles { v.paso(dt) }
+            for v in vehiculos where v.turno != nil && v.raiz.isHidden { v.paso(dt) }   // camiones esperando su turno
             let pb = eje(66, 0)
             let cerca = vehiculos.contains { !$0.raiz.isHidden && hypot($0.pos.x - pb.x, $0.pos.y - pb.y) < 9 }
             aberturaBarrera += ((cerca ? 1 : 0) - aberturaBarrera) * min(1, dt * 4)
@@ -1838,7 +1855,7 @@ struct Villa3D: NSViewRepresentable {
                 nav.rect(c.x, c.y, 3.5, 2.75, yawL)
             case "port":
                 PuertoYFlota.capitania(n, c: c, muro: muro, techo: NSColor(Color(hex: z.roof)), nav: nav)
-            case "trade", "bank", "casino", "museum", "university", "science", "airport", "airbase", "navalbase", "army", "defense", "police", "maritime", "energy":
+            case "trade", "bank", "casino", "museum", "university", "science", "airport", "airbase", "navalbase", "army", "defense", "police", "maritime", "energy", "industry":
                 break                 // islas nuevas: sus edificios van en montarIslas
             case "mall":
                 break                 // el mall (alas, atrio y tótem) va en el bloque estático: montarMall
@@ -1992,6 +2009,7 @@ struct Villa3D: NSViewRepresentable {
             let dt = ultimo == 0 ? 1.0 / 60 : min(0.1, ahora - ultimo)
             ultimo = ahora
             aplicarCamara(CGFloat(dt))
+            (vista as? VistaVilla)?.actualizarLupa()
             let lista = Array(personas.values)
             let cam = camara.position
             for p in lista {
@@ -2299,6 +2317,10 @@ struct Villa3D: NSViewRepresentable {
                 let m = Islas.aero(0, -2)
                 volar(SCNVector3(m.x, 0, m.y), distancia: 92, inclinacion: 0.62, giro: Islas.angAero + .pi); return
             }
+            if zid == "industrial" {     // la Villa Industrial completa: fábrica, logística y servicios
+                let m = Islas.ind(0, 0)
+                volar(SCNVector3(m.x, 0, m.y), distancia: 95, inclinacion: 0.72, giro: Islas.angInd + .pi); return
+            }
             if zid == "energia" {        // la isla entera: centrales, plantas, observatorio y parque eólico
                 let m = Islas.ener(0, 4)
                 volar(SCNVector3(m.x, 0, m.y), distancia: 120, inclinacion: 0.7, giro: Islas.angEner + .pi); return
@@ -2437,6 +2459,7 @@ struct Villa3D: NSViewRepresentable {
                     else if ["armada", "ejercito", "comisaria", "fach", "gobmar"].contains(e) { irBarrio(e) }
                     else if e == "ministerio" { irBarrio("defensa") }
                     else if e == "energia" { irBarrio("energia") }
+                    else if e == "industrial" { irBarrio("industrial") }
                     else if e.hasPrefix("museo-") { irBarrio("museo") }
                     else if Coordinador.volables.contains(where: { e.hasPrefix($0) }) { enfocarElemento(x) }
                     return
@@ -2478,6 +2501,77 @@ struct Villa3D: NSViewRepresentable {
 final class VistaVilla: SCNView {
     weak var coord: Villa3D.Coordinador?
     private var inicio = NSPoint.zero, movido = false
+
+    // Lupa: segunda vista de la misma escena, circular, con una cámara de campo estrecho que mira por el
+    // rayo del cursor desde la cámara principal. Es aumento real (se ve el detalle), no una foto ampliada.
+    private let marcoLupa = NSView(), lupa = SCNView(), camLupa = SCNNode(), rotuloLupa = NSTextField(labelWithString: "")
+    private var cursor: CGPoint?
+    private let diametroLupa: CGFloat = 280
+
+    private func armarLupa() {
+        marcoLupa.wantsLayer = true
+        marcoLupa.layer?.cornerRadius = diametroLupa / 2
+        marcoLupa.layer?.masksToBounds = true
+        marcoLupa.layer?.borderWidth = 4
+        marcoLupa.layer?.borderColor = NSColor(calibratedWhite: 0.95, alpha: 0.9).cgColor
+        marcoLupa.frame = NSRect(x: 0, y: 0, width: diametroLupa, height: diametroLupa)
+        camLupa.name = "camara-lupa"
+        camLupa.camera = pointOfView?.camera?.copy() as? SCNCamera ?? SCNCamera()
+        scene?.rootNode.addChildNode(camLupa)
+        lupa.frame = marcoLupa.bounds; lupa.autoresizingMask = [.width, .height]
+        lupa.scene = scene; lupa.pointOfView = camLupa
+        lupa.allowsCameraControl = false
+        lupa.antialiasingMode = .multisampling2X
+        lupa.preferredFramesPerSecond = 30
+        marcoLupa.addSubview(lupa)
+        rotuloLupa.font = .systemFont(ofSize: 12, weight: .semibold)
+        rotuloLupa.textColor = .white
+        rotuloLupa.drawsBackground = true
+        rotuloLupa.backgroundColor = NSColor(calibratedWhite: 0, alpha: 0.45)
+        rotuloLupa.alignment = .center
+        rotuloLupa.frame = NSRect(x: diametroLupa / 2 - 24, y: 12, width: 48, height: 17)
+        marcoLupa.addSubview(rotuloLupa)
+        marcoLupa.isHidden = true
+        addSubview(marcoLupa)
+    }
+
+    /// Mueve la lupa al cursor y apunta su cámara; se llama al mover el ratón y en cada cuadro (la cámara principal se mueve sola).
+    func actualizarLupa() {
+        let c = ControlVilla.shared
+        guard c.lupa, let p = cursor, bounds.contains(p), let pov = pointOfView, let cam = pov.camera else {
+            if !marcoLupa.isHidden { marcoLupa.isHidden = true; lupa.isPlaying = false }
+            return
+        }
+        if marcoLupa.superview == nil { armarLupa() }
+        let d = diametroLupa
+        marcoLupa.frame = NSRect(x: p.x - d / 2, y: p.y - d / 2, width: d, height: d)
+        let lejos = unprojectPoint(SCNVector3(p.x, p.y, 1))
+        camLupa.simdWorldPosition = pov.simdWorldPosition
+        camLupa.simdLook(at: SIMD3<Float>(Float(lejos.x), Float(lejos.y), Float(lejos.z)), up: SIMD3<Float>(0, 1, 0), localFront: SIMD3<Float>(0, 0, -1))
+        // El círculo muestra d/aumento puntos de la vista principal: mismo ángulo que esos puntos, repartido en d.
+        let lado = cam.projectionDirection == .horizontal ? bounds.width : bounds.height
+        let t = tan(cam.fieldOfView * .pi / 360) * (d / c.aumentoLupa) / max(lado, 1)
+        if let cl = camLupa.camera {
+            cl.fieldOfView = atan(t) * 360 / .pi
+            cl.projectionDirection = .vertical
+            cl.exposureOffset = cam.exposureOffset; cl.bloomIntensity = cam.bloomIntensity
+        }
+        rotuloLupa.stringValue = String(format: c.aumentoLupa < 10 ? "%.1f×" : "%.0f×", c.aumentoLupa).replacingOccurrences(of: ".", with: ",")
+        if marcoLupa.isHidden { marcoLupa.isHidden = false; lupa.isPlaying = true }
+    }
+
+    // La lupa no recibe clics: todo pasa a la villa que está debajo.
+    override func hitTest(_ p: NSPoint) -> NSView? {
+        let v = super.hitTest(p)
+        return v === lupa || v === marcoLupa || v === rotuloLupa ? self : v
+    }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.filter { $0.owner === self }.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
+    }
+    override func mouseMoved(with e: NSEvent) { cursor = punto(e); actualizarLupa(); super.mouseMoved(with: e) }
+    override func mouseExited(with e: NSEvent) { cursor = nil; actualizarLupa(); super.mouseExited(with: e) }
     override var acceptsFirstResponder: Bool { true }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -2502,6 +2596,7 @@ final class VistaVilla: SCNView {
         if e.clickCount == 2 { coord?.enfocarPunto(punto(e)) }
     }
     override func mouseDragged(with e: NSEvent) {
+        cursor = punto(e)
         if hypot(e.locationInWindow.x - inicio.x, e.locationInWindow.y - inicio.y) > 4 { movido = true }
         if e.modifierFlags.contains(.shift) || e.modifierFlags.contains(.option) { coord?.panear(e.deltaX, e.deltaY) }
         else { coord?.orbitar(e.deltaX, e.deltaY) }
@@ -2512,6 +2607,12 @@ final class VistaVilla: SCNView {
     override func otherMouseDragged(with e: NSEvent) { coord?.panear(e.deltaX, e.deltaY) }
     override func scrollWheel(with e: NSEvent) {
         coord?.tocado()
+        let c = ControlVilla.shared
+        if c.lupa && e.modifierFlags.contains(.option) {   // ⌥ + rueda: cambia el aumento de la lupa
+            let paso = e.hasPreciseScrollingDeltas ? e.scrollingDeltaY * 0.01 : e.scrollingDeltaY * 0.12
+            c.aumentoLupa = min(12, max(1.5, c.aumentoLupa * (1 + paso)))
+            actualizarLupa(); return
+        }
         if e.hasPreciseScrollingDeltas {          // trackpad: vertical = zoom, horizontal = girar
             coord?.zoom(e.scrollingDeltaY, en: punto(e))
             if abs(e.scrollingDeltaX) > abs(e.scrollingDeltaY) { coord?.orbitar(-e.scrollingDeltaX * 0.8, 0) }
@@ -3381,6 +3482,15 @@ final class Vehiculo {
     private(set) var pos = CGPoint.zero, rumbo: CGFloat = 0
     var detenido = false
     var esperando: CGFloat = 0, liberado: CGFloat = 0     // anti-atasco: segundos detenido y segundos de paso libre
+    /// Sale de su origen solo en su turno (reloj común de `periodo` s): los camiones del mall llegan a los andenes de a
+    /// uno, como con un semáforo. Mientras espera queda oculto en su origen (túnel o puerto) y no estorba a nadie.
+    var turno: (periodo: Double, fase: Double)?
+
+    func esperarTurno() {
+        guard let t = turno else { return }
+        let r = (Date().timeIntervalSince1970 - t.fase).truncatingRemainder(dividingBy: t.periodo)
+        s = 0; espera = t.periodo - r; raiz.isHidden = true; ubicar(suave: false)
+    }
 
     var trazado: [CGPoint] { pts }
     init(_ raiz: SCNNode, ruta: [CGPoint], s: CGFloat, velocidad: CGFloat, paradas: [(s: CGFloat, seg: Double)] = [],
@@ -3395,12 +3505,12 @@ final class Vehiculo {
     }
 
     func paso(_ dt: CGFloat) {
-        if espera > 0 { espera -= Double(dt); return }
+        if espera > 0 { espera -= Double(dt); if espera <= 0 && turno != nil { raiz.isHidden = false }; return }
         if detenido { return }
         let antes = s
         s += velocidad * dt * (enReversa ? 0.35 : 1)
         for p in paradas where antes < p.s && s >= p.s { s = p.s; espera = p.seg }
-        if s >= total { s -= total }
+        if s >= total { s -= total; if turno != nil { esperarTurno(); return } }
         ubicar(suave: true)
     }
 
@@ -3904,10 +4014,13 @@ extension Villa3D.Coordinador {
         let idaP = [p0, p1] + arco(61, pa + atan2(12.0, 61), d.tEntra) + d.entra
         let rutaP = idaP + d.atras + d.sale + arco(59, d.tSale, pa + atan2(12.0, 59)) + [PuertoYFlota.w(12.0, 64.5), PuertoYFlota.w(12.0, 80), PuertoYFlota.w(12.2, 83.5)]
         rutas.append((rutaP, 30, largo(idaP + d.atras), [idaP.count - 1, idaP.count], NSColor(Color(hex: "#d68910"))))
-        for r in rutas {
-            let v = Vehiculo(camion(r.color, faro: faro, freno: freno), ruta: r.ruta, s: r.s, velocidad: 7, paradas: [(r.parada, 15)],
+        for (k, r) in rutas.enumerated() {
+            let v = Vehiculo(camion(r.color, faro: faro, freno: freno), ruta: r.ruta, s: 0, velocidad: 7, paradas: [(r.parada, 15)],
                              reversa: r.reversa, largo: 4.8, ancho: 1.8, paciente: true)   // 1,8: los carriles del anillo (r 59 y 61) están a 2 m
             v.raiz.scale = SCNVector3(0.75, 0.75, 0.75)   // camión de reparto liviano de 4,8 m y 2,6 m de alto: cabe en los andenes
+            // Turnos cada 50 s (ciclo de 150 s): cada uno llega a los andenes ~50 s después del anterior; la maniobra
+            // y la descarga duran ~20 s, así que nunca coinciden dos camiones en el estacionamiento de proveedores.
+            v.turno = (150, Double(k) * 50 - Double(r.parada) / 7); v.esperarTurno()
             vehiculos.append(v)
             escena.rootNode.addChildNode(v.raiz)
         }
@@ -3967,6 +4080,17 @@ enum Islas {
     nonisolated static func ener(_ x: CGFloat, _ z: CGFloat) -> CGPoint { w(angEner, rEner, x, z) }
     nonisolated static let angUni: CGFloat = -1.5, rUni: CGFloat = 258, radioUni: CGFloat = 52       // Ciudad Universitaria (entre el Distrito y el aeropuerto)
     nonisolated static func uni(_ x: CGFloat, _ z: CGFloat) -> CGPoint { w(angUni, rUni, x, z) }
+    /// Villa Industrial: isla propia mar afuera de la Isla de Energía, unida a ella por un puente que sale de su
+    /// circunvalación a −52° (el antiguo «terreno disponible»), entre los decantadores y el parque eólico.
+    nonisolated static let gInd: CGFloat = -52 * .pi / 180, radioInd: CGFloat = 36
+    nonisolated static let centroInd: CGPoint = ener(sin(gInd) * 104, cos(gInd) * 104)
+    nonisolated static let angInd: CGFloat = atan2(centroInd.x, centroInd.y), rInd: CGFloat = hypot(centroInd.x, centroInd.y)
+    nonisolated static func ind(_ x: CGFloat, _ z: CGFloat) -> CGPoint { w(angInd, rInd, x, z) }
+    /// Puente Isla de Energía ⇄ Villa Industrial (extremos en el mundo, 1 m dentro de cada isla).
+    nonisolated static let puenteInd: (CGPoint, CGPoint) = {
+        let a = ener(sin(gInd) * 43, cos(gInd) * 43), c = centroInd, d = hypot(c.x - a.x, c.y - a.y)
+        return (a, CGPoint(x: c.x - (c.x - a.x) / d * (radioInd - 1), y: c.y - (c.y - a.y) / d * (radioInd - 1)))
+    }()
     /// Puente isla Distrito ⇄ Ciudad Universitaria (extremos en el mundo, 1 m dentro de cada isla).
     nonisolated static let puenteUni: (CGPoint, CGPoint) = {
         let a = dist(0, 0), c = uni(0, 0), d = hypot(c.x - a.x, c.y - a.y), u = CGPoint(x: (c.x - a.x) / d, y: (c.y - a.y) / d)
@@ -3997,17 +4121,17 @@ enum Islas {
     nonisolated static let barrios: [(id: String, x: CGFloat, z: CGFloat, r: CGFloat)] = [
         ("ciencia", -18, -21, 11), ("casino", 18, -25, 8), ("banco", 19, -9, 7),
         ("trade", -19, 21, 11), ("museo", 0, 36, 8)]          // el Trade Center, al fondo: ya no tapa nada; atrás a la derecha sale el puente a la Universidad
-    nonisolated static let zonas: Set<String> = ["trade", "banco", "casino", "uni", "ciencia", "museo", "aeropuerto", "fach", "armada", "ejercito", "defensa", "comisaria", "gobmar", "energia"]
+    nonisolated static let zonas: Set<String> = ["trade", "banco", "casino", "uni", "ciencia", "museo", "aeropuerto", "fach", "armada", "ejercito", "defensa", "comisaria", "gobmar", "energia", "industrial"]
     /// Barrios sin plaza de adoquines (sus edificios ocupan el suelo).
     nonisolated static let sinPlaza: Set<String> = ["aeropuerto", "fach", "armada", "ejercito", "defensa", "comisaria", "gobmar"]
     nonisolated static let posiciones: [String: CGPoint] = {
         var d = Dictionary(uniqueKeysWithValues: barrios.map { ($0.id, dist($0.x, $0.z)) })
         d["aeropuerto"] = aero(-12, -46); d["fach"] = fa(-12, -22); d["armada"] = naval(10, -22); d["ejercito"] = def(12, -30); d["gobmar"] = w(angNav, 0, 11, 68)
-        d["defensa"] = polar(17, 2.86); d["comisaria"] = polar(48, 0.9); d["energia"] = ener(0, -12); d["uni"] = uni(2, -8); return d
+        d["defensa"] = polar(17, 2.86); d["comisaria"] = polar(48, 0.9); d["energia"] = ener(0, -12); d["uni"] = uni(2, -8); d["industrial"] = ind(0, -11); return d
     }()
     nonisolated static let radios: [String: CGFloat] = {
         var d = Dictionary(uniqueKeysWithValues: barrios.map { ($0.id, $0.r) }); d["aeropuerto"] = 9
-        for k in ["fach", "armada", "ejercito"] { d[k] = 6 }; d["defensa"] = 3.5; d["comisaria"] = 4.5; d["gobmar"] = 4; d["energia"] = 9; d["uni"] = 14; return d
+        for k in ["fach", "armada", "ejercito"] { d[k] = 6 }; d["defensa"] = 3.5; d["comisaria"] = 4.5; d["gobmar"] = 4; d["energia"] = 9; d["uni"] = 14; d["industrial"] = 6; return d
     }()
     /// Puentes a las islas: tramo elevado (rampa de subida, tablero a 1,3 m sobre el mar, rampa de bajada).
     nonisolated static let altoPuente: CGFloat = 1.3, rampaPuente: CGFloat = 11
@@ -4022,7 +4146,7 @@ enum Islas {
             let sube = min(rampaPuente, (rB - rA) / 2 - 0.5)
             if rad > rA && rad < rB { return rad < rA + sube ? (rad - rA) / sube * altoPuente : rad > rB - sube ? (rB - rad) / sube * altoPuente : altoPuente }
         }
-        for (a, b) in [puenteFA, puenteUni] {
+        for (a, b) in [puenteFA, puenteUni, puenteInd] {
             let L = hypot(b.x - a.x, b.y - a.y), dx = (b.x - a.x) / L, dz = (b.y - a.y) / L
             let t = (p.x - a.x) * dx + (p.y - a.y) * dz, lat = abs((p.x - a.x) * dz - (p.y - a.y) * dx)
             if lat < 5 && t > 0 && t < L {
@@ -4033,7 +4157,7 @@ enum Islas {
         return 0
     }
     @MainActor static var buses: [Vehiculo] = []          // se suman al tránsito después de los autos del anillo
-    nonisolated static let alturaEtiqueta: [String: CGFloat] = ["trade": 42, "banco": 12, "casino": 27, "uni": 18, "ciencia": 13, "museo": 11, "aeropuerto": 14, "fach": 13, "armada": 12, "ejercito": 10, "defensa": 11, "comisaria": 9, "gobmar": 9, "energia": 13]
+    nonisolated static let alturaEtiqueta: [String: CGFloat] = ["trade": 42, "banco": 12, "casino": 27, "uni": 18, "ciencia": 13, "museo": 11, "aeropuerto": 14, "fach": 13, "armada": 12, "ejercito": 10, "defensa": 11, "comisaria": 9, "gobmar": 9, "energia": 13, "industrial": 12]
     /// Sin árboles ni palmeras: avenidas a las islas, caleta, balneario, marina y letrero.
     nonisolated static func libre(_ p: CGPoint) -> Bool {
         let r = hypot(p.x, p.y), a = atan2(p.x, p.y)
@@ -4056,6 +4180,7 @@ enum Islas {
         if hypot(p.x - naval(0, 0).x, p.y - naval(0, 0).y) < radioNav + 4 { return "armada" }
         if hypot(p.x - ener(0, 0).x, p.y - ener(0, 0).y) < radioEner + 4 { return "energia" }
         if hypot(p.x - uni(0, 0).x, p.y - uni(0, 0).y) < radioUni + 4 { return "uni" }
+        if hypot(p.x - centroInd.x, p.y - centroInd.y) < radioInd + 4 { return "industrial" }
         let c = dist(0, 0)
         guard hypot(p.x - c.x, p.y - c.y) < radioDist + 4 else { return nil }
         return posiciones.filter { barrios.map(\.id).contains($0.key) }.min { hypot(p.x - $0.value.x, p.y - $0.value.y) < hypot(p.x - $1.value.x, p.y - $1.value.y) }?.key
@@ -4228,7 +4353,7 @@ extension Villa3D.Coordinador {
 
     func montarIslas(_ r: SCNNode) {
         let pasto = Mat.textura(.pasto, repetir: 14), arena = Mat.textura(.arena, repetir: 12)
-        for (c, rad) in [(Islas.aero(0, 0), Islas.radioAero), (Islas.dist(0, 0), Islas.radioDist), (Islas.def(0, 0), Islas.radioDef), (Islas.caleta(0, 0), Islas.radioCaleta), (Islas.fa(0, 0), Islas.radioFA), (Islas.naval(0, 0), Islas.radioNav), (Islas.ener(0, 0), Islas.radioEner), (Islas.uni(0, 0), Islas.radioUni)] {
+        for (c, rad) in [(Islas.aero(0, 0), Islas.radioAero), (Islas.dist(0, 0), Islas.radioDist), (Islas.def(0, 0), Islas.radioDef), (Islas.caleta(0, 0), Islas.radioCaleta), (Islas.fa(0, 0), Islas.radioFA), (Islas.naval(0, 0), Islas.radioNav), (Islas.ener(0, 0), Islas.radioEner), (Islas.uni(0, 0), Islas.radioUni), (Islas.centroInd, Islas.radioInd)] {
             playaNatural(centro: c, desde: rad + 1, ancho: 8)
             r.addChildNode(nodo(SCNCylinder(radius: rad, height: 0.5), pasto, y: -0.24, x: c.x, z: c.y))
             nav.anillo(c.x, c.y, rad + 1.5, hueco: 0, ancho: 0)
@@ -4240,6 +4365,7 @@ extension Villa3D.Coordinador {
         avenidaIsla(r, ang: Islas.angEner, hasta: Islas.rEner - Islas.radioEner + 2, nombre: "ISLA DE ENERGÍA", color: "#c27c0e")
         puenteRecto(r, Islas.puenteFA.0, Islas.puenteFA.1)
         puenteRecto(r, Islas.puenteUni.0, Islas.puenteUni.1)
+        puenteRecto(r, Islas.puenteInd.0, Islas.puenteInd.1)
         avenidaIsla(r, ang: Islas.angCaleta, hasta: Islas.rCaleta - Islas.radioCaleta + 2, nombre: "CALETA", color: "#1f6fb2")
         montarAeropuerto(r)
         montarDistrito(r)
@@ -4250,6 +4376,7 @@ extension Villa3D.Coordinador {
         montarMinisterioYComisaria(r)
         montarEnergia(r)
         montarUniversidad(r)
+        montarIndustrial(r)
         montarCaleta(r)
         montarBalneario(r)
         montarMarina(r)
@@ -4950,6 +5077,319 @@ extension Villa3D.Coordinador {
         }
         escena.rootNode.addChildNode(aplanado(U, "elem:uni-campus"))
         U.removeFromParentNode()
+    }
+
+    // MARK: Villa Industrial (isla propia, unida a la Isla de Energía por un puente)
+
+    /// Marco local de la isla (−z hacia la villa). Al centro, dentro de la circunvalación (radio 24), la Fábrica de
+    /// Ensamblaje con su línea de despacho animada (cada caja es una de tus apps), el muelle de carga, la administración,
+    /// el estacionamiento y la plaza del barrio «industrial»; alrededor, los servicios de un barrio industrial real.
+    func montarIndustrial(_ r: SCNNode) {
+        let A = Islas.angInd, R = Islas.rInd
+        func grupo() -> SCNNode { let n = marcoLocal(A, R); r.addChildNode(n); return n }
+        func fijar(_ g: SCNNode, _ nombre: String) { escena.rootNode.addChildNode(aplanado(g, nombre)); g.removeFromParentNode() }
+        func navR(_ x: CGFloat, _ z: CGFloat, _ hx: CGFloat, _ hz: CGFloat, _ giro: CGFloat = 0, linea: Int = #line) {
+            let q = Islas.ind(x, z); nav.rect(q.x, q.y, hx, hz, A + giro, linea: linea)
+        }
+        func navC(_ x: CGFloat, _ z: CGFloat, _ rr: CGFloat, linea: Int = #line) { let q = Islas.ind(x, z); nav.circulo(q.x, q.y, rr, linea: linea) }
+        func polI(_ rr: CGFloat, _ g: CGFloat) -> (x: CGFloat, z: CGFloat) { let a = g * .pi / 180; return (sin(a) * rr, cos(a) * rr) }
+        /// Dependencia en el anillo exterior (r 31,5): frente (+z local) mirando a la circunvalación.
+        func lote(_ g: SCNNode, _ grados: CGFloat) -> SCNNode {
+            let p = polI(31.5, grados), n = SCNNode(); n.position = SCNVector3(p.x, 0, p.z); n.eulerAngles.y = grados * .pi / 180 + .pi
+            g.addChildNode(n); return n
+        }
+        func navLote(_ grados: CGFloat, _ hx: CGFloat, _ hz: CGFloat, dz: CGFloat = 0) {
+            let p = polI(31.5 - dz, grados); navR(p.x, p.z, hx, hz, grados * .pi / 180 + .pi)
+        }
+        let asfalto = Mat.pbr(NSColor(calibratedWhite: 0.19, alpha: 1), rugosidad: 0.85), blanco = Mat.pbr(NSColor(calibratedWhite: 0.96, alpha: 1))
+        let hormigon = Mat.pbr(NSColor(calibratedWhite: 0.76, alpha: 1), rugosidad: 0.8), gris = Mat.pbr(NSColor(Color(hex: "#7b8790")), rugosidad: 0.5, metal: 0.5)
+        let acero = Mat.pbr(NSColor(Color(hex: "#c9ced3")), rugosidad: 0.3, metal: 0.8), oscuro = Mat.pbr(NSColor(calibratedWhite: 0.12, alpha: 1), rugosidad: 0.6)
+        let chapa = Mat.textura(.estuco, repetir: 4, tinte: "#cfd5da"), naranja = Mat.pbr(NSColor(Color(hex: "#d35400")), rugosidad: 0.45, metal: 0.3)
+        let amarillo = Mat.pbr(NSColor(Color(hex: "#f1c40f")), rugosidad: 0.4), rojo = Mat.pbr(NSColor(Color(hex: "#c0392b")), rugosidad: 0.45)
+        let verde = Mat.pbr(NSColor(Color(hex: "#2e7d32")), rugosidad: 0.5), azul = Mat.pbr(NSColor(Color(hex: "#1f6fb2")), rugosidad: 0.4, metal: 0.2)
+        let reja = Mat.pbr(NSColor(calibratedWhite: 0.55, alpha: 1), rugosidad: 0.4, metal: 0.7); reja.transparency = 0.55
+        let vidrio = Mat.pbr(NSColor(Color(hex: "#9fd3ec")), rugosidad: 0.05, metal: 0.3); vidrio.transparency = 0.35
+        let luz = Mat.emisivo(NSColor(calibratedRed: 1, green: 0.9, blue: 0.6, alpha: 1)); focos.append(luz)
+        // Catálogo de la Fábrica (lo deja el agente fabrica.py): las cajas de la línea llevan los nombres de las apps
+        let ruta = Almacen.carpetaLocal + "/trabajo/fabrica-catalogo.json"
+        let json = (try? Data(contentsOf: URL(fileURLWithPath: ruta))).flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
+        let apps = (json?["apps"] as? [[String: Any]] ?? []).sorted { ($0["t"] as? Double ?? 0) > ($1["t"] as? Double ?? 0) }
+        let nMac = apps.filter { ($0["plataforma"] as? String ?? "").contains("Mac") }.count
+        let nIOS = apps.filter { ($0["plataforma"] as? String ?? "").contains("iOS") }.count
+
+        // Calles: acceso desde el puente (a 145°) y circunvalación de dos carriles (radio 24)
+        let C = grupo()
+        let pa = polI(31.5, 145), ga = CGFloat(145) * .pi / 180
+        caja(C, 7, 0.05, 10, asfalto, x: pa.x, y: 0.03, z: pa.z, giro: ga)
+        caja(C, 0.15, 0.02, 9, blanco, x: pa.x, y: 0.065, z: pa.z, giro: ga)
+        C.addChildNode(nodo(SCNTube(innerRadius: 21, outerRadius: 27, height: 0.05), asfalto, y: 0.032))
+        for k in 0..<48 where k % 2 == 0 {
+            let a = CGFloat(k) / 48 * 2 * .pi
+            caja(C, 0.14, 0.02, 1.4, blanco, x: sin(a) * 24, y: 0.065, z: cos(a) * 24, giro: a + .pi / 2)
+        }
+        for g in stride(from: CGFloat(15), to: 360, by: 30) {         // faroles en el borde interior
+            let p = polI(20.2, g); cil(C, 0.07, 4.6, gris, x: p.x, z: p.z); C.addChildNode(nodo(SCNSphere(radius: 0.25), luz, y: 4.7, x: p.x, z: p.z)); navC(p.x, p.z, 0.15)
+        }
+        // Pórtico de acceso con el nombre del barrio, mirando a quien llega por el puente, y garita con barrera
+        let P = SCNNode(); P.position = SCNVector3(pa.x, 0, pa.z); P.eulerAngles.y = ga; C.addChildNode(P)
+        for s: CGFloat in [-1, 1] {
+            caja(P, 0.8, 6.4, 0.8, naranja, x: s * 4.7)
+            let q = (x: pa.x + s * 4.7 * cos(ga), z: pa.z - s * 4.7 * sin(ga)); navR(q.x, q.z, 0.4, 0.4, ga)
+        }
+        caja(P, 10.4, 1.2, 0.8, oscuro, y: 7.0); caja(P, 10.8, 0.2, 1.0, naranja, y: 7.7)
+        letrero(P, "VILLA INDUSTRIAL", "#d35400", ancho: 9, alto: 0.9, y: 7.0, z: 0.45)
+        letrero(P, "PARQUE INDUSTRIAL · FÁBRICA DE APPS", "#d35400", ancho: 9, alto: 0.9, y: 7.0, z: -0.45, giro: .pi)
+        let G0 = lote(C, 158)
+        caja(G0, 2.4, 2.6, 2.2, blanco, z: -1.2); caja(G0, 2.8, 0.2, 2.6, naranja, y: 2.7, z: -1.2)
+        caja(G0, 2.0, 0.9, 0.06, ventana(), y: 1.7, z: -0.07)
+        letrero(G0, "CONTROL DE ACCESO", "#d35400", ancho: 2.4, alto: 0.35, y: 3.0, z: 0.1)
+        navLote(158, 1.3, 1.2, dz: -1.2)
+        let barrera = nodo(SCNBox(width: 3.4, height: 0.1, length: 0.1, chamferRadius: 0.02), Mat.pbr(NSColor(Color(hex: "#e74c3c"))), y: 1.0, x: -1.9, z: 1.0)
+        G0.addChildNode(barrera); cil(G0, 0.12, 1.0, amarillo, x: -0.1, z: 1.0)
+        fijar(C, "elem:ind-acceso")
+
+        // Fábrica de Ensamblaje: nave de 24 × 12 m con techo de dientes de sierra vidriados, portones y chimeneas
+        let F = grupo()
+        let H = SCNNode(); H.position = SCNVector3(0, 0, 6); F.addChildNode(H)
+        caja(H, 24.4, 0.3, 12.4, hormigon)
+        caja(H, 24, 5.6, 12, chapa, y: 3.1)
+        for k in 0..<6 {                                                  // dientes de sierra: faldón de chapa y paño de vidrio al norte
+            let x0 = -12 + CGFloat(k) * 4
+            let f = caja(H, 4.4, 0.12, 12.2, Mat.pbr(NSColor(Color(hex: "#95a5a6")), rugosidad: 0.4, metal: 0.6), x: x0 + 2, y: 6.8, z: 0)
+            f.eulerAngles.z = 0.42
+            caja(H, 0.08, 1.8, 12, vidrio, x: x0 + 3.95, y: 6.8, z: 0)
+        }
+        caja(H, 22, 1.0, 0.06, ventana(), y: 3.4, z: -6.03)
+        for x: CGFloat in [-6, 6] {                                       // portones de carga con franjas
+            caja(H, 3.4, 3.4, 0.06, Mat.pbr(NSColor(calibratedWhite: 0.7, alpha: 1), metal: 0.5), x: x, y: 2.0, z: -6.04)
+            for y: CGFloat in [0.6, 1.4, 2.2, 3.0] { caja(H, 3.4, 0.05, 0.08, gris, x: x, y: y + 0.3, z: -6.06) }
+        }
+        caja(H, 2.4, 2.6, 0.06, vidrio, y: 1.6, z: -6.04); caja(H, 3.2, 0.15, 1.4, naranja, y: 3.0, z: -6.6)   // acceso de personal con marquesina
+        caja(H, 1.6, 1.4, 0.06, oscuro, x: -10.5, y: 1.2, z: -6.04)                                       // boca de salida de la línea
+        letrero(H, "FÁBRICA DE ENSAMBLAJE", "#d35400", ancho: 14, alto: 1.1, y: 5.0, z: -6.08)
+        for x: CGFloat in [-8, -4] {                                       // chimeneas con humo tenue (horno de pintura y caldera)
+            cil(H, 0.55, 14, Mat.pbr(NSColor(calibratedWhite: 0.6, alpha: 1), metal: 0.4), x: x, z: 7.2)
+            for y: CGFloat in [11.6, 12.8] { H.addChildNode(nodo(SCNTube(innerRadius: 0.55, outerRadius: 0.62, height: 0.4), rojo, y: y, x: x, z: 7.2)) }
+            navC(x, 13.2, 0.6)
+            vapor(x, 13.2, y: 14.1, radio: 0.4, tasa: 3, vida: 6, sube: 1.2, tam: 1.2, crece: 3, gris: 0.72, opacidad: 0.5, marco: Islas.ind)
+        }
+        navR(0, 6, 12.1, 6.1)
+        // Muelle de despacho: andén con camión y robot paletizador al final de la línea
+        caja(F, 3.6, 1.1, 3.2, hormigon, x: 13.0, y: 0.55, z: -1.6); navR(13.0, -1.6, 1.8, 1.6)
+        for z: CGFloat in [-2.8, -0.4] { caja(F, 0.3, 0.6, 0.3, oscuro, x: 14.85, y: 0.7, z: z) }     // topes de goma
+        caja(F, 0.06, 0.04, 3.4, amarillo, x: 14.85, y: 1.12, z: -1.6)
+        letrero(F, "MUELLE DE DESPACHO", "#1f6fb2", ancho: 3.4, alto: 0.4, x: 13.0, y: 2.6, z: -3.25, giro: .pi)
+        for x: CGFloat in [11.4, 14.6] { cil(F, 0.06, 2.4, gris, x: x, z: -3.2); navC(x, -3.2, 0.08) }
+        // Línea de despacho (cinta transportadora con rodillos y barandas), fija; las cajas van en el bloque animado
+        caja(F, 21, 0.08, 1.3, oscuro, x: 0.5, y: 0.9, z: -1.2)
+        caja(F, 21, 0.18, 0.08, amarillo, x: 0.5, y: 1.05, z: -0.52)             // baranda solo atrás: los rótulos de las cajas miran a la plaza
+        var xp: CGFloat = -9.6
+        while xp < 10.8 { for s: CGFloat in [-1, 1] { caja(F, 0.08, 0.85, 0.08, gris, x: xp, y: 0.42, z: -1.2 + s * 0.6) }; xp += 2.4 }
+        navR(0.5, -1.2, 10.5, 0.7)
+        // Tótem del catálogo: cuántos productos ha ensamblado la fábrica
+        caja(F, 0.3, 4.2, 0.3, oscuro, x: 8.2, z: -8.2); navR(8.2, -8.2, 0.2, 0.2)
+        letrero(F, "CATÁLOGO DE APPS · \(apps.count)", "#d35400", ancho: 3.6, alto: 0.55, x: 8.2, y: 3.8, z: -8.4, giro: .pi)
+        letrero(F, "\(nMac) MAC · \(nIOS) iOS", "#1f6fb2", ancho: 3.6, alto: 0.55, x: 8.2, y: 3.15, z: -8.4, giro: .pi)
+        fijar(F, "elem:ind-fabrica")
+
+        // Administración (dos pisos vidriados) y estacionamiento del personal
+        let O = grupo()
+        let Ad = SCNNode(); Ad.position = SCNVector3(-14.5, 0, -7); Ad.eulerAngles.y = .pi / 2; O.addChildNode(Ad)
+        caja(Ad, 6, 6.2, 5, Mat.textura(.estuco, repetir: 2, tinte: "#ece7df"), y: 3.1)
+        for k in 0..<2 { caja(Ad, 5.4, 1.8, 0.06, ventana(), y: 1.5 + CGFloat(k) * 3, z: -2.53); caja(Ad, 5.4, 1.8, 0.06, ventana(), y: 1.5 + CGFloat(k) * 3, z: 2.53) }
+        caja(Ad, 6.4, 0.3, 5.4, naranja, y: 6.35)
+        letrero(Ad, "ADMINISTRACIÓN", "#d35400", ancho: 4.4, alto: 0.5, y: 5.7, z: 2.58)
+        navR(-14.5, -7, 2.6, 3.1)
+        let E = SCNNode(); E.position = SCNVector3(11, 0, -12); O.addChildNode(E)
+        caja(E, 5, 0.05, 4, asfalto, y: 0.03)
+        for x: CGFloat in [-2.5, -0.85, 0.85, 2.5] { caja(E, 0.08, 0.02, 3.4, blanco, x: x, y: 0.065) }
+        for (k, c) in ([NSColor.systemBlue, .white, .systemGray] as [NSColor]).enumerated() {
+            let x = -1.68 + CGFloat(k) * 1.68
+            caja(E, 1.3, 0.75, 3.0, Mat.pbr(c, rugosidad: 0.3, metal: 0.4), x: x, y: 0.55, chaflan: 0.2)
+            caja(E, 1.15, 0.45, 1.4, Mat.pbr(NSColor(Color(hex: "#16232e")), rugosidad: 0.05, metal: 0.6), x: x, y: 1.1, z: 0.1, chaflan: 0.15)
+            navR(11 + x, -12, 0.65, 1.5)
+        }
+        letrero(E, "ESTACIONAMIENTO PERSONAL", "#1f6fb2", ancho: 3.2, alto: 0.35, y: 1.6, z: -2.3, giro: .pi)
+        for x: CGFloat in [-1.4, 1.4] { cil(E, 0.04, 1.42, gris, x: x, z: -2.3); navC(11 + x, -14.3, 0.05) }
+        fijar(O, "elem:ind-administracion")
+
+        // Servicios del barrio, en el anillo exterior (frente a la circunvalación)
+        let S = grupo()
+        // 120°: Subestación eléctrica (alimentada desde la Isla de Energía)
+        let Sub = lote(S, 120)
+        caja(Sub, 8, 0.08, 6, Mat.pbr(NSColor(Color(hex: "#b9ad97")), rugosidad: 0.95), y: 0.04)
+        for x: CGFloat in [-2.2, 0.8] {
+            caja(Sub, 1.6, 1.8, 1.2, gris, x: x, y: 1.0, z: 0.4)
+            for k in 0..<3 { cil(Sub, 0.08, 0.9, blanco, x: x - 0.5 + CGFloat(k) * 0.5, y: 2.3, z: 0.4) }
+            for k in 0..<4 { caja(Sub, 0.05, 1.4, 1.0, gris, x: x - 0.9 + CGFloat(k) * 0.6, y: 0.9, z: 1.15) }
+        }
+        for x: CGFloat in [-3.2, 3.2] { caja(Sub, 0.2, 5.5, 0.2, acero, x: x, z: -1.8) }
+        caja(Sub, 6.6, 0.2, 0.2, acero, y: 5.4, z: -1.8)
+        caja(Sub, 2.2, 2.6, 2, blanco, x: 2.6, y: 1.3, z: -1.6)
+        caja(Sub, 8, 2.2, 0.04, reja, y: 1.1, z: 3); caja(Sub, 0.04, 2.2, 6, reja, x: -4, y: 1.1); caja(Sub, 0.04, 2.2, 6, reja, x: 4, y: 1.1)
+        letrero(Sub, "SUBESTACIÓN ELÉCTRICA · ALTA TENSIÓN", "#c27c0e", ancho: 4.6, alto: 0.45, y: 2.6, z: 3.05)
+        navLote(120, 4.1, 3.1)
+        // 170°: Estación de servicio (combustible y tienda)
+        let Es = lote(S, 172)
+        caja(Es, 7, 0.06, 5.2, hormigon, y: 0.03)
+        for x: CGFloat in [-2.6, 2.6] { for z: CGFloat in [-0.6, 1.6] { caja(Es, 0.25, 4.0, 0.25, blanco, x: x, y: 2.0, z: z) } }
+        caja(Es, 7, 0.5, 4.2, blanco, y: 4.2, z: 0.5); caja(Es, 7.05, 0.2, 4.25, verde, y: 3.95, z: 0.5)
+        for x: CGFloat in [-1.3, 1.3] { caja(Es, 0.6, 1.5, 0.5, rojo, x: x, y: 0.8, z: 0.5); caja(Es, 0.5, 0.35, 0.06, Mat.emisivo(.white, fuerza: 0.5), x: x, y: 1.25, z: 0.78) }
+        caja(Es, 4, 2.8, 1.6, Mat.textura(.estuco, repetir: 2, tinte: "#f4f1ea"), y: 1.4, z: -1.9)
+        caja(Es, 3, 1.4, 0.06, ventana(), y: 1.4, z: -1.07)
+        letrero(Es, "COMBUSTIBLE · DIÉSEL · TIENDA", "#2e7d32", ancho: 6, alto: 0.45, y: 4.2, z: 2.63)
+        navLote(172, 3.5, 2.6)
+        // 196°: Brigada de bomberos industrial
+        let Bo = lote(S, 196)
+        caja(Bo, 7, 4.6, 5.6, rojo, y: 2.3); caja(Bo, 7.3, 0.3, 5.9, blanco, y: 4.75)
+        for x: CGFloat in [-1.8, 1.8] { caja(Bo, 2.8, 3.2, 0.06, Mat.pbr(NSColor(calibratedWhite: 0.85, alpha: 1), metal: 0.5), x: x, y: 1.6, z: 2.83) }
+        cil(Bo, 0.9, 7, Mat.textura(.estuco, repetir: 2, tinte: "#e9e4d6"), x: 2.6, z: -2)
+        letrero(Bo, "BRIGADA INDUSTRIAL · BOMBEROS", "#c0392b", ancho: 6, alto: 0.5, y: 4.0, z: 2.88)
+        navLote(196, 3.6, 2.9)
+        // 220°: Taller mecánico y de mantención
+        let Ta = lote(S, 220)
+        caja(Ta, 8, 4.2, 6, Mat.textura(.estuco, repetir: 3, tinte: "#9fabb4"), y: 2.1)
+        let bov = nodo(SCNCylinder(radius: 3.1, height: 6.2), Mat.pbr(NSColor(Color(hex: "#7f8c8d")), rugosidad: 0.4, metal: 0.6), y: 4.2)
+        bov.eulerAngles.x = .pi / 2; bov.scale = SCNVector3(1.3, 1, 0.3); Ta.addChildNode(bov)
+        for x: CGFloat in [-2, 2] { caja(Ta, 3, 3.2, 0.06, oscuro, x: x, y: 1.6, z: 3.03) }
+        letrero(Ta, "TALLER MECÁNICO · MANTENCIÓN", "#7f8c8d", ancho: 6, alto: 0.5, y: 3.7, z: 3.08)
+        navLote(220, 4.1, 3.1)
+        // 245°: Estanques de almacenamiento con dique de contención
+        let Tq = lote(S, 245)
+        caja(Tq, 8, 0.6, 6, hormigon, y: 0.3)
+        for x: CGFloat in [-2, 2] {
+            cil(Tq, 1.8, 5, acero, x: x, y: 3.1); Tq.addChildNode(nodo(SCNCone(topRadius: 0.2, bottomRadius: 1.85, height: 0.6), acero, y: 5.9, x: x))
+            for y: CGFloat in [1.6, 3.2, 4.6] { Tq.addChildNode(nodo(SCNTube(innerRadius: 1.8, outerRadius: 1.86, height: 0.08), gris, y: y, x: x)) }
+        }
+        caja(Tq, 0.15, 0.15, 4, amarillo, y: 5.0)
+        letrero(Tq, "ESTANQUES · MATERIAS PRIMAS", "#7b8790", ancho: 5, alto: 0.45, y: 1.2, z: 3.05)
+        navLote(245, 4.1, 3.1)
+        // 270°: Planta de tratamiento de residuos industriales líquidos (RILes)
+        let Ri = lote(S, 270)
+        for x: CGFloat in [-2.2, 2.2] {
+            cil(Ri, 1.9, 1.4, hormigon, x: x, z: -0.5)
+            Ri.addChildNode(nodo(SCNCylinder(radius: 1.75, height: 0.06), Mat.pbr(NSColor(Color(hex: "#4f8f8a")), rugosidad: 0.08), y: 1.37, x: x, z: -0.5))
+            caja(Ri, 3.6, 0.1, 0.4, acero, x: x, y: 1.6, z: -0.5)
+        }
+        caja(Ri, 3, 2.6, 1.8, blanco, z: 2.0); caja(Ri, 2.2, 0.8, 0.06, ventana(), y: 1.6, z: 2.93)
+        letrero(Ri, "PLANTA DE RILes", "#117a65", ancho: 2.8, alto: 0.4, y: 2.9, z: 2.94)
+        navLote(270, 4.1, 2.9)
+        // 295°: Bodega de distribución con estanterías
+        let Bd = lote(S, 295)
+        caja(Bd, 8, 5.0, 6, Mat.textura(.estuco, repetir: 3, tinte: "#d6dde3"), y: 2.5); caja(Bd, 8.4, 0.3, 6.4, azul, y: 5.15)
+        caja(Bd, 4, 3.6, 0.06, oscuro, y: 1.8, z: 3.03)
+        for x: CGFloat in [-1.5, 0, 1.5] { for y: CGFloat in [0.6, 1.6, 2.6] { caja(Bd, 1.1, 0.7, 0.6, Mat.pbr(NSColor(Color(hex: "#c8a165")), rugosidad: 0.9), x: x, y: y, z: 2.6) } }
+        letrero(Bd, "BODEGA DE DISTRIBUCIÓN", "#1f6fb2", ancho: 5, alto: 0.5, y: 4.3, z: 3.08)
+        navLote(295, 4.1, 3.1)
+        // 320°: Torre de agua (estanque elevado)
+        let Tw = lote(S, 320)
+        for (x, z) in [(CGFloat(-1.2), CGFloat(-1.2)), (1.2, -1.2), (-1.2, 1.2), (1.2, 1.2)] { caja(Tw, 0.25, 9, 0.25, acero, x: x, y: 4.5, z: z) }
+        cil(Tw, 2.2, 2.6, Mat.pbr(NSColor(Color(hex: "#5dade2")), rugosidad: 0.3, metal: 0.5), y: 10.3)
+        Tw.addChildNode(nodo(SCNCone(topRadius: 0.2, bottomRadius: 2.3, height: 0.9), gris, y: 12.05))
+        letrero(Tw, "AGUA INDUSTRIAL", "#1f6fb2", ancho: 3.4, alto: 0.5, y: 10.3, z: 2.25)
+        navLote(320, 1.4, 1.4)
+        // 345°: Patio de contenedores con grúa pórtico
+        let Pc = lote(S, 345)
+        caja(Pc, 11, 0.05, 6, asfalto, y: 0.03)
+        let colores = ["#c0392b", "#1f6fb2", "#27ae60", "#f39c12", "#8e44ad", "#16a085"]
+        for (k, (x, y)) in [(CGFloat(-3.6), CGFloat(0)), (-3.6, 1), (0, 0), (0, 1), (3.6, 0), (3.6, 1)].enumerated() {
+            caja(Pc, 3.2, 1.0, 1.4, Mat.pbr(NSColor(Color(hex: colores[k])), rugosidad: 0.6, metal: 0.3), x: x, y: 0.55 + y * 1.02, z: -1.4)
+            caja(Pc, 3.2, 1.0, 1.4, Mat.pbr(NSColor(Color(hex: colores[(k + 3) % 6])), rugosidad: 0.6, metal: 0.3), x: x, y: 0.55 + y * 1.02, z: 0.4)
+        }
+        for x: CGFloat in [-5.2, 5.2] { for z: CGFloat in [-2.6, 2.4] { caja(Pc, 0.3, 4.6, 0.3, amarillo, x: x, y: 2.3, z: z) } }
+        for z: CGFloat in [-2.6, 2.4] { caja(Pc, 10.7, 0.4, 0.4, amarillo, y: 4.6, z: z) }
+        caja(Pc, 1.6, 0.8, 5.4, amarillo, x: 1.2, y: 4.5, z: -0.1)
+        letrero(Pc, "PATIO DE CONTENEDORES", "#d35400", ancho: 4.4, alto: 0.45, y: 3.6, z: 2.6)
+        navLote(345, 5.5, 3.1)
+        // 15°: Silos de granos y polímeros
+        let Si = lote(S, 15)
+        for x: CGFloat in [-2.4, 0, 2.4] {
+            cil(Si, 1.1, 7, Mat.pbr(NSColor(calibratedWhite: 0.85, alpha: 1), rugosidad: 0.3, metal: 0.7), x: x, y: 4.0, z: -0.8)
+            Si.addChildNode(nodo(SCNCone(topRadius: 0.15, bottomRadius: 1.15, height: 0.8), gris, y: 7.9, x: x, z: -0.8))
+            Si.addChildNode(nodo(SCNCone(topRadius: 1.1, bottomRadius: 0.2, height: 0.9), gris, y: 0.45, x: x, z: -0.8))
+        }
+        caja(Si, 6, 0.2, 0.5, gris, y: 8.4, z: -0.8)
+        letrero(Si, "SILOS", "#7b8790", ancho: 2.2, alto: 0.45, y: 1.6, z: 0.5)
+        navLote(15, 3.7, 1.3, dz: 0.8)
+        // 40°: Punto limpio (reciclaje)
+        let Pl = lote(S, 40)
+        caja(Pl, 8, 0.06, 5, hormigon, y: 0.03)
+        for (k, c) in ["#f1c40f", "#3498db", "#2ecc71", "#e67e22", "#7f8c8d"].enumerated() {
+            caja(Pl, 1.3, 1.5, 1.6, Mat.pbr(NSColor(Color(hex: c)), rugosidad: 0.6), x: -2.8 + CGFloat(k) * 1.4, y: 0.75, z: -0.6)
+        }
+        caja(Pl, 7.6, 0.15, 2.6, Mat.pbr(NSColor(calibratedWhite: 0.85, alpha: 1), metal: 0.4), y: 2.9, z: -0.6)
+        for x: CGFloat in [-3.6, 3.6] { caja(Pl, 0.15, 2.9, 0.15, gris, x: x, y: 1.45, z: 0.6) }
+        letrero(Pl, "PUNTO LIMPIO · RECICLAJE", "#27ae60", ancho: 5, alto: 0.45, y: 2.4, z: 0.75)
+        navLote(40, 4.1, 2.6)
+        // 65°: Laboratorio de control de calidad (pruebas de cada app antes de despacharla)
+        let La = lote(S, 65)
+        caja(La, 7, 4.2, 5.6, blanco, y: 2.1); caja(La, 7.2, 0.25, 5.8, Mat.pbr(NSColor(Color(hex: "#117a65")), rugosidad: 0.5), y: 4.32)
+        caja(La, 6.2, 1.6, 0.06, ventana(), y: 2.3, z: 2.83)
+        La.addChildNode(nodo(SCNSphere(radius: 0.9), blanco, y: 4.6, x: 2))
+        letrero(La, "LABORATORIO · CONTROL DE CALIDAD", "#117a65", ancho: 6, alto: 0.45, y: 3.6, z: 2.88)
+        navLote(65, 3.6, 2.9)
+        // 90°: Casino de trabajadores con terraza
+        let Ca = lote(S, 90)
+        caja(Ca, 7, 3.6, 5, Mat.textura(.estuco, repetir: 2, tinte: "#f3e3c3"), y: 1.8, z: -0.5); caja(Ca, 7.4, 0.3, 5.4, rojo, y: 3.75, z: -0.5)
+        caja(Ca, 6, 1.8, 0.06, ventana(), y: 1.6, z: 2.03)
+        letrero(Ca, "CASINO DE TRABAJADORES", "#a04000", ancho: 5, alto: 0.45, y: 3.1, z: 2.08)
+        for x: CGFloat in [-2.2, 0, 2.2] {
+            cil(Ca, 0.45, 0.05, blanco, x: x, y: 0.8, z: 2.9); cil(Ca, 0.05, 0.8, gris, x: x, y: 0.4, z: 2.9)
+            Ca.addChildNode(nodo(SCNCone(topRadius: 0.05, bottomRadius: 1.0, height: 0.45), naranja, y: 2.2, x: x, z: 2.9)); cil(Ca, 0.035, 2.0, gris, x: x, y: 1.0, z: 2.9)
+        }
+        navLote(90, 3.6, 3.4, dz: 0.3)
+        fijar(S, "elem:ind-servicios")
+
+        // Bloque animado: cajas (cada una es una de tus apps) avanzando por la línea, robot paletizador y montacargas
+        let M = marcoLocal(A, R); escena.rootNode.addChildNode(M)
+        let nombres = apps.prefix(10).compactMap { $0["nombre"] as? String }
+        let cajas = nombres.isEmpty ? ["APP"] : nombres
+        let viaje: TimeInterval = 26
+        for (k, nombre) in cajas.enumerated() {
+            let x0 = -9.6 + CGFloat(k) * 20 / CGFloat(cajas.count)
+            let carton = Mat.pbr(NSColor(Color(hex: "#c8a165")), rugosidad: 0.9)
+            let rotulo = Villa3D.Coordinador.mCartel(nombre, NSColor(Color(hex: "#d35400")), ancho: 620, brillo: 0.5)
+            let b = nodo(SCNBox(width: 1.5, height: 0.8, length: 0.9, chamferRadius: 0.03), carton, y: 1.36, x: x0, z: -1.2)
+            b.geometry?.materials = [carton, carton, rotulo, carton, carton, carton]      // rótulo en la cara −z (hacia la plaza)
+            let y = CGFloat(1.36), z = CGFloat(-1.2)
+            let ciclo = SCNAction.sequence([.move(to: SCNVector3(-9.6, y, z), duration: 0), .move(to: SCNVector3(10.4, y, z), duration: viaje)])
+            b.runAction(.sequence([.move(to: SCNVector3(10.4, y, z), duration: viaje * Double((10.4 - x0) / 20)), .repeatForever(ciclo)]))
+            b.name = "elem:ind-linea"; M.addChildNode(b)
+        }
+        let base = nodo(SCNCylinder(radius: 0.45, height: 0.6), naranja, y: 1.4, x: 12.2, z: -2.4); base.name = "elem:ind-linea"; M.addChildNode(base)
+        let brazo = SCNNode(); brazo.position = SCNVector3(12.2, 1.7, -2.4); brazo.name = "elem:ind-linea"; M.addChildNode(brazo)
+        let seg1 = nodo(SCNBox(width: 0.3, height: 1.6, length: 0.3, chamferRadius: 0.05), naranja, y: 0.8); seg1.eulerAngles.z = 0.35; brazo.addChildNode(seg1)
+        let seg2 = nodo(SCNBox(width: 1.5, height: 0.25, length: 0.25, chamferRadius: 0.05), naranja, y: 1.5, x: -0.75); brazo.addChildNode(seg2)
+        brazo.addChildNode(nodo(SCNBox(width: 0.4, height: 0.3, length: 0.5, chamferRadius: 0.03), oscuro, y: 1.25, x: -1.45))
+        brazo.runAction(.repeatForever(.sequence([.rotateBy(x: 0, y: 1.7, z: 0, duration: 2.4), .wait(duration: 0.6), .rotateBy(x: 0, y: -1.7, z: 0, duration: 2.4), .wait(duration: 0.8)])))
+        // Montacargas que va y viene entre la bodega y el muelle por el borde interior
+        let mc = SCNNode(); mc.name = "elem:ind-linea"
+        mc.addChildNode(nodo(SCNBox(width: 1.0, height: 0.8, length: 1.6, chamferRadius: 0.1), amarillo, y: 0.55))
+        mc.addChildNode(nodo(SCNBox(width: 0.9, height: 0.06, length: 0.9, chamferRadius: 0), gris, y: 1.3, z: -0.4))
+        for x: CGFloat in [-0.45, 0.45] { mc.addChildNode(nodo(SCNBox(width: 0.06, height: 1.4, length: 0.06, chamferRadius: 0), oscuro, y: 1.4, x: x, z: 0.3)) }
+        mc.addChildNode(nodo(SCNBox(width: 0.8, height: 0.06, length: 0.8, chamferRadius: 0), oscuro, y: 2.1, z: 0.3))
+        mc.addChildNode(nodo(SCNBox(width: 0.08, height: 0.06, length: 1.0, chamferRadius: 0), gris, y: 0.25, x: -0.25, z: -1.2))
+        mc.addChildNode(nodo(SCNBox(width: 0.08, height: 0.06, length: 1.0, chamferRadius: 0), gris, y: 0.25, x: 0.25, z: -1.2))
+        mc.position = SCNVector3(14.6, 0, -6.0); M.addChildNode(mc)
+        mc.runAction(.repeatForever(.sequence([.move(to: SCNVector3(14.6, 0, -9.8), duration: 4), .wait(duration: 1.5), .move(to: SCNVector3(14.6, 0, -6.0), duration: 4), .wait(duration: 1.5)])))
+
+        // Tránsito: camiones de carga por la circunvalación y uno detenido en el muelle
+        let faro = Mat.emisivo(NSColor(calibratedRed: 1, green: 0.97, blue: 0.85, alpha: 1)); focos.append(faro)
+        let fr = Mat.emisivo(.systemRed, fuerza: 0.8)
+        let anden = camionServicio("carga", "#d35400", nombre: "elem:ind-despacho", faro: faro, freno: fr)
+        let qa = Islas.ind(17.9, -1.6); anden.position = SCNVector3(qa.x, 0, qa.y); anden.eulerAngles.y = A + .pi / 2
+        escena.rootNode.addChildNode(anden); navR(17.9, -1.6, 3.0, 1.1)
+        var exterior: [CGPoint] = [], interior: [CGPoint] = []
+        for k in 0..<44 { let t = CGFloat(k) / 44 * 2 * .pi; exterior.append(Islas.ind(sin(t) * 25.5, -cos(t) * 25.5)) }
+        for k in 0..<38 { let t = -CGFloat(k) / 38 * 2 * .pi; interior.append(Islas.ind(sin(t) * 23, -cos(t) * 23)) }
+        for (k, (oficio, color)) in [("carga", "#1f6fb2"), ("carga", "#27ae60")].enumerated() {
+            let v = Vehiculo(camionServicio(oficio, color, nombre: "elem:ind-camion", faro: faro, freno: fr), ruta: exterior,
+                             s: 2 * .pi * 25.5 * CGFloat(k) / 2, velocidad: 5.5, largo: 4.8, ancho: 1.8, paciente: true)
+            Islas.buses.append(v); escena.rootNode.addChildNode(v.raiz)
+        }
+        let v = Vehiculo(camionServicio("carga", "#7f8c8d", nombre: "elem:ind-camion", faro: faro, freno: fr), ruta: interior, s: 30, velocidad: 5,
+                         largo: 4.8, ancho: 1.8, paciente: true)
+        Islas.buses.append(v); escena.rootNode.addChildNode(v.raiz)
     }
 
     private func relojImagen() -> NSImage {
@@ -6680,7 +7120,7 @@ extension Villa3D.Coordinador {
 
     /// Penacho de vapor o humo con partículas: nace en un disco, sube frenándose, se ensancha, se desvanece y lo arrastra la brisa.
     private func vapor(_ x: CGFloat, _ z: CGFloat, y: CGFloat, radio: CGFloat, tasa: CGFloat, vida: CGFloat, sube: CGFloat, tam: CGFloat, crece: CGFloat,
-                       gris: CGFloat = 0.97, opacidad: CGFloat = 0.8, viento: CGFloat = 1) {
+                       gris: CGFloat = 0.97, opacidad: CGFloat = 0.8, viento: CGFloat = 1, marco: (CGFloat, CGFloat) -> CGPoint = Islas.ener) {
         let ps = SCNParticleSystem()
         ps.particleImage = Self.humo
         ps.emitterShape = SCNCylinder(radius: radio, height: 0.2); ps.birthLocation = .volume
@@ -6696,7 +7136,7 @@ extension Villa3D.Coordinador {
         let t = CAKeyframeAnimation(); t.values = [1, (1 + crece) / 2, crece]          // el controlador de tamaño multiplica particleSize; t.keyTimes = [0, 0.35, 1]
         let o = CAKeyframeAnimation(); o.values = [0, opacidad, opacidad * 0.55, 0]; o.keyTimes = [0, 0.1, 0.55, 1]
         ps.propertyControllers = [.size: SCNParticlePropertyController(animation: t), .opacity: SCNParticlePropertyController(animation: o)]
-        let q = Islas.ener(x, z), n = SCNNode(); n.position = SCNVector3(q.x, y, q.y); n.addParticleSystem(ps); escena.rootNode.addChildNode(n)
+        let q = marco(x, z), n = SCNNode(); n.position = SCNVector3(q.x, y, q.y); n.addParticleSystem(ps); escena.rootNode.addChildNode(n)
     }
 
     /// Camión de servicio de la isla (proa +z, 6,6 × 2,4 m, base en y = 0): chasis con largueros, cabina avanzada con
@@ -7192,15 +7632,21 @@ extension Villa3D.Coordinador {
         cup.runAction(.repeatForever(.sequence([.rotateBy(x: 0, y: 1.2, z: 0, duration: 9), .wait(duration: 6), .rotateBy(x: 0, y: -0.7, z: 0, duration: 6), .wait(duration: 8)])))
         escena.rootNode.addChildNode(cup)
 
-        // Terreno disponible para una nueva dependencia
+        // Acceso a la Villa Industrial (antes terreno disponible): calle desde la circunvalación hasta el puente
         let L = marco()
-        let pl = polE(38, -52), gl = CGFloat(-52) * .pi / 180
-        caja(L, 17, 0.04, 5.6, grava, x: pl.x, y: 0.025, z: pl.z, giro: gl)
-        for dx: CGFloat in [-8.4, 8.4] { for dz: CGFloat in [-2.7, 2.7] {
-            cil(L, 0.07, 1.1, gris, x: pl.x + cos(gl) * dx + sin(gl) * dz, z: pl.z - sin(gl) * dx + cos(gl) * dz)
-        } }
-        letrero(L, "TERRENO DISPONIBLE · NUEVA INDUSTRIA", "#7f8c8d", ancho: 5.2, alto: 0.55, x: pl.x - sin(gl) * 2.8, y: 1.3, z: pl.z - cos(gl) * 2.8, giro: gl + .pi)
-        fijar(L, "elem:ener-terreno")
+        let pl = polE(38.5, -52), gl = CGFloat(-52) * .pi / 180
+        caja(L, 7, 0.05, 11.5, asfalto, x: pl.x, y: 0.03, z: pl.z, giro: gl)
+        caja(L, 0.15, 0.02, 10.5, blanco, x: pl.x, y: 0.065, z: pl.z, giro: gl)
+        let pIn = polE(36, -52)
+        for lado: CGFloat in [-1, 1] {
+            let q = (x: pIn.x + cos(gl) * lado * 4.6, z: pIn.z - sin(gl) * lado * 4.6)
+            cil(L, 0.07, 1.0, gris, x: q.x, z: q.z); navC(q.x, q.z, 0.1)
+        }
+        let pS = (x: pIn.x + cos(gl) * 7.4, z: pIn.z - sin(gl) * 7.4)          // cartel al costado de la calle, sobre sus dos postes
+        for d: CGFloat in [-1.9, 1.9] { cil(L, 0.05, 1.95, gris, x: pS.x + cos(gl) * d, z: pS.z - sin(gl) * d) }
+        navR(pS.x, pS.z, 2.2, 0.2, gl)
+        letrero(L, "→ VILLA INDUSTRIAL", "#d35400", ancho: 4.4, alto: 0.55, x: pS.x, y: 2.2, z: pS.z, giro: gl + .pi)
+        fijar(L, "elem:industrial")
 
         // Planta de agua potable: decantadores circulares con puente barredor giratorio, edificio de cloración con filtros
         // de arena abiertos y estanque elevado de pedestal.

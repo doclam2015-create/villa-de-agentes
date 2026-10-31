@@ -6,6 +6,9 @@ Una villa 3D para macOS (SwiftUI + SceneKit) donde cada **agente automático** d
 - Islas unidas por puentes: aeropuerto internacional (dos pistas, vuelos coordinados), distrito con Trade Center, banco, casino, universidad, centro científico y museo de agentes retirados, y una isla por rama de defensa (Ejército, Fuerza Aérea junto al aeropuerto y Armada junto al puerto, bajo una Gobernación Marítima y un Ministerio de Defensa), además de una comisaría.
 - Costa con caleta de pescadores en su islote, balneario con bañistas articulados, marina y mar con oleaje en la GPU; letreros «SILICON VILLA».
 - Plano desplegable (botón «Plano») y cámara que llega de frente y busca sola una vista sin edificios que tapen el destino.
+- Lupa de aumento (botón «Lupa» o ⌘L): un círculo que sigue al cursor y agranda en 3D real la parte de la villa por la que pasa; ⌥ + rueda cambia el aumento (1,5× a 12×).
+- Congelar (⇧⌘P): deja la villa quieta y sin carteles encima para tomar una captura completa o de una porción con la app que prefieras; otro clic la reanuda.
+- Villa Industrial: isla con la Fábrica de Ensamblaje y un catálogo de apps (búsqueda, filtros, tabla y CSV) que lee `trabajo/fabrica-catalogo.json` de la carpeta de datos si existe.
 - Pizarras con estado, horario, historial y botón «Ejecutar ahora»; centro de mando con salud del Mac y alarma; paneles de gastos y de tokens con gráficos.
 
 La primera vez se abre con una **villa de ejemplo** (agentes ficticios). Ningún dato sale de tu Mac.

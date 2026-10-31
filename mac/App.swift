@@ -16,6 +16,9 @@ struct VillaDeAgentesApp: App {
                 Button("Revisar ahora") { Task { await almacen.revisar() } }.keyboardShortcut("r")
                 Button("Ejecutar agente seleccionado") { if let a = almacen.seleccionado { Task { await almacen.ejecutar(a) } } }
                     .keyboardShortcut("e").disabled(almacen.seleccionado?.servicio == nil)
+                Button("Catálogo de la Fábrica (todas mis apps)") { ControlVilla.shared.verFabrica.toggle() }.keyboardShortcut("i", modifiers: [.command, .shift])
+                Button("Lupa de aumento") { ControlVilla.shared.lupa.toggle() }.keyboardShortcut("l")
+                Button("Congelar o reanudar (para capturas)") { ControlVilla.shared.alternarCongelar() }.keyboardShortcut("p", modifiers: [.command, .shift])
                 Divider()
                 Button("Acercar") { NotificationCenter.default.post(name: .villaCamara, object: "acercar") }.keyboardShortcut("+")
                 Button("Alejar") { NotificationCenter.default.post(name: .villaCamara, object: "alejar") }.keyboardShortcut("-")

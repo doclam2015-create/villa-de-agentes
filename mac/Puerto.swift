@@ -65,9 +65,10 @@ final class PuertoYFlota {
     nonisolated static let abreKelvin: CGFloat = tan(19.47 * .pi / 180)     // ángulo de Kelvin: toda estela se abre así
     private static var cacheEspuma: CGImage?
     private var portaaviones = SCNNode(), escoltas: [(n: SCNNode, lat: CGFloat, fwd: CGFloat)] = []
-    /// Otros grupos de batalla: portaaviones con su destructor, cada uno con su propio derrotero elíptico mar adentro.
-    private var grupos: [(pa: SCNNode, escolta: SCNNode, ang: CGFloat, r: CGFloat, fase: CGFloat)] = []
-    private var fase: CGFloat = 0, radioFlota: CGFloat = 200, rumboFlota: CGFloat = 0
+    /// Otros grupos de batalla: portaaviones con su escolta (destructor, fragata, corbeta y submarino), cada uno con su
+    /// propio derrotero elíptico mar adentro. Cada buque: distancia a proa, a estribor y altura de flotación.
+    private var grupos: [(pa: SCNNode, escolta: [(n: SCNNode, fwd: CGFloat, lat: CGFloat, y: CGFloat)], ang: CGFloat, r: CGFloat, fase: CGFloat)] = []
+    private var fase: CGFloat = 0, radioFlota: CGFloat = 215, rumboFlota: CGFloat = 0
     private var ultimoEstado: CFTimeInterval = 0
 
     // Materiales compartidos (pocos materiales = pocos dibujos)
@@ -586,17 +587,31 @@ final class PuertoYFlota {
         return n
     }
 
+    /// Submarino de escolta de los otros grupos de batalla (modelo descargado o dibujado).
+    private func submarino() -> SCNNode {
+        let n = SCNNode(), c = SCNNode()
+        if let m = Modelos.nodo("submarino", largo: 18) { m.childNodes[0].position.y = -1.26; c.addChildNode(m) } else {
+            let tubo = nodo(SCNCapsule(capRadius: 1.3, height: 18), grisOscuro, y: -0.4); tubo.eulerAngles.x = .pi / 2
+            c.addChildNode(tubo)
+            c.addChildNode(nodo(SCNBox(width: 0.9, height: 2.2, length: 3, chamferRadius: 0.4), grisOscuro, y: 1.6, z: 3))
+        }
+        Villa3D.Coordinador.hornear(c); n.addChildNode(c.flattenedClone()); n.name = "elem:flota-portaaviones"
+        return n
+    }
+
     private func montarFlota() {
         portaaviones = armarPortaaviones("Portaaviones Defensor")
         escena.rootNode.addChildNode(portaaviones)
         estelaDe(portaaviones, manga: 9, largo: 90, popa: -28)
         // Escolta: cada buque es un agente protector u optimizador
         let buques: [(id: String, nombre: String, icono: String, color: NSColor, lat: CGFloat, fwd: CGFloat, sub: Bool)] = [
-            ("seg", "Fragata Antivirus", "lock.shield.fill", .systemRed, 0, 50, false),
-            ("opt", "Destructor Optimizador", "speedometer", .systemOrange, -20, 8, false),
-            ("salud", "Corbeta Salud del Mac", "heart.text.square.fill", .systemPink, 20, 8, false),
-            ("resp", "Patrullero Respaldos", "externaldrive.fill.badge.timemachine", .systemGreen, 0, -50, false),
-            ("red", "Submarino Vigía de red", "network", .systemTeal, -12, -48, true)]
+            // Pantalla de escolta como en un grupo real: cada buque en su puesto fijo, con varios cascos de distancia
+            // (fragata 70 m a proa, destructor y corbeta 32 m por las bandas, patrullero 70 m a popa, submarino a popa-estribor)
+            ("seg", "Fragata Antivirus", "lock.shield.fill", .systemRed, 0, 70, false),
+            ("opt", "Destructor Optimizador", "speedometer", .systemOrange, -32, 10, false),
+            ("salud", "Corbeta Salud del Mac", "heart.text.square.fill", .systemPink, 32, 10, false),
+            ("resp", "Patrullero Respaldos", "externaldrive.fill.badge.timemachine", .systemGreen, 0, -70, false),
+            ("red", "Submarino Vigía de red", "network", .systemTeal, 24, -42, true)]
         for e in buques {
             let n = SCNNode(); n.name = "elem:flota-\(e.id)"
             let c = SCNNode()
@@ -641,15 +656,23 @@ final class PuertoYFlota {
         // Otros dos grupos de batalla patrullan mar adentro, en sectores libres de islas (entre la Armada y el Regimiento,
         // y entre la isla Distrito y el Balneario)
         for (k, (nombre, ang)) in [("Portaaviones Centinela", CGFloat(0.55)), ("Portaaviones Vigía Austral", -2.42)].enumerated() {
-            let pa = armarPortaaviones(nombre), es = destructor()
-            escena.rootNode.addChildNode(pa); escena.rootNode.addChildNode(es)
-            estelaDe(pa, manga: 9, largo: 90, popa: -28); estelaDe(es, manga: 3.6, largo: 36, popa: -11)
+            let pa = armarPortaaviones(nombre)
+            escena.rootNode.addChildNode(pa)
+            estelaDe(pa, manga: 9, largo: 90, popa: -28)
             // Ya en su sector desde el primer cuadro (si no, aparecían un instante en el centro de la villa)
-            pa.position = SCNVector3(sin(ang) * 235, -0.2, cos(ang) * 235)
-            es.position = SCNVector3(sin(ang) * 235 - cos(ang) * 60, -0.1, cos(ang) * 235 + sin(ang) * 60)
-            grupos.append((pa, es, ang, 235, CGFloat(k) * 2.4))
+            pa.position = SCNVector3(sin(ang) * 250, -0.2, cos(ang) * 250)
+            // Misma pantalla que el Defensor: fragata a proa, destructor y corbeta por las bandas, submarino a popa
+            var es: [(n: SCNNode, fwd: CGFloat, lat: CGFloat, y: CGFloat)] = []
+            for (sub, fwd, lat) in [(false, CGFloat(10), CGFloat(-32)), (false, 70, 0), (false, 10, 32), (true, -70, 0)] {
+                let b = sub ? submarino() : destructor()
+                escena.rootNode.addChildNode(b)
+                estelaDe(b, manga: sub ? 2.6 : 3.6, largo: sub ? 22 : 36, popa: sub ? -9 : -11)
+                b.position = SCNVector3(sin(ang) * 250 + cos(ang) * lat, -0.1, cos(ang) * 250 - sin(ang) * lat)
+                es.append((b, fwd, lat, -0.1))
+            }
+            grupos.append((pa, es, ang, 250, CGFloat(k) * 2.4))
         }
-        for n in ([portaaviones] + escoltas.map(\.n) + grupos.map(\.pa) + grupos.map(\.escolta) as [SCNNode]) { n.enumerateHierarchy { x, _ in x.castsShadow = false } }
+        for n in ([portaaviones] + escoltas.map(\.n) + grupos.map(\.pa) + grupos.flatMap { $0.escolta.map(\.n) } as [SCNNode]) { n.enumerateHierarchy { x, _ in x.castsShadow = false } }
         lancha.enumerateHierarchy { x, _ in x.castsShadow = false }
     }
 
@@ -657,7 +680,7 @@ final class PuertoYFlota {
     func cercano(_ p: SCNVector3) -> SCNNode? {
         var lista: [(SCNNode, CGFloat)] = [(portaaviones, 30), (lancha, 5)]
         for e in escoltas { lista.append((e.n, 13)) }
-        for g in grupos { lista.append((g.pa, 30)); lista.append((g.escolta, 13)) }
+        for g in grupos { lista.append((g.pa, 30)); for e in g.escolta { lista.append((e.n, 13)) } }
         return lista.map { ($0.0, hypot($0.0.position.x - p.x, $0.0.position.z - p.z) / $0.1) }
             .filter { $0.1 < 1 }.min { $0.1 < $1.1 }?.0
     }
@@ -676,7 +699,7 @@ final class PuertoYFlota {
         // constante. Cada buque sigue el MISMO derrotero desplazado por su distancia a proa/popa y de costado, con
         // la proa en la tangente de su propio punto: todos avanzan siempre hacia adelante, como una formación real,
         // en vez de girar como un bloque rígido (antes los de popa retrocedían en las curvas cerradas).
-        radioFlota += ((alerta ? 178 : 200) - radioFlota) * min(1, dt * 0.08)
+        radioFlota += ((alerta ? 195 : 215) - radioFlota) * min(1, dt * 0.08)
         let a = PuertoYFlota.flotaAng
         let T = CGPoint(x: cos(a), y: -sin(a)), R = CGPoint(x: sin(a), y: cos(a))
         let A: CGFloat = 55, B: CGFloat = 40
@@ -709,13 +732,13 @@ final class PuertoYFlota {
             // escora hacia fuera de la curva, proporcional a cuánto vira
             e.n.eulerAngles = SCNVector3(0, CGFloat(e.n.eulerAngles.y) + giro, sin(t * 0.8 + CGFloat(k)) * 0.02 - max(-0.05, min(0.05, giro / max(dt, 0.001) * 0.15)))
         }
-        // Otros grupos: misma elipse (55 × 40 m) en su sector; el destructor navega 60 m a popa y 18 m a babor
+        // Otros grupos: misma elipse (55 × 40 m) en su sector; cada escolta en su puesto de la formación
         for k in grupos.indices {
             let g = grupos[k], Tg = CGPoint(x: cos(g.ang), y: -sin(g.ang)), Rg = CGPoint(x: sin(g.ang), y: cos(g.ang))
             func pt(_ f: CGFloat) -> CGPoint { CGPoint(x: Rg.x * g.r + Tg.x * A * cos(f) + Rg.x * B * sin(f), y: Rg.y * g.r + Tg.y * A * cos(f) + Rg.y * B * sin(f)) }
             func tg(_ f: CGFloat) -> CGPoint { CGPoint(x: -Tg.x * A * sin(f) + Rg.x * B * cos(f), y: -Tg.y * A * sin(f) + Rg.y * B * cos(f)) }
             let d0 = tg(g.fase); grupos[k].fase += dt * 1.0 / max(1, hypot(d0.x, d0.y))
-            for (n, fwd, lat, y) in [(g.pa, CGFloat(0), CGFloat(0), CGFloat(-0.2)), (g.escolta, -60, -18, -0.1)] {
+            for (n, fwd, lat, y) in [(g.pa, CGFloat(0), CGFloat(0), CGFloat(-0.2))] + g.escolta.map({ ($0.n, $0.fwd, $0.lat, $0.y) }) {
                 let d = tg(grupos[k].fase), f = grupos[k].fase + fwd / max(1, hypot(d.x, d.y)), c = pt(f), dd = tg(f), rb = atan2(dd.x, dd.y)
                 n.position = SCNVector3(c.x + cos(rb) * lat, y + sin(t * 0.7 + CGFloat(k)) * 0.06, c.y - sin(rb) * lat)
                 n.eulerAngles = SCNVector3(0, rb, sin(t * 0.5 + CGFloat(k)) * 0.008)

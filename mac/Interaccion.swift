@@ -82,6 +82,12 @@ struct TarjetaElemento: View {
                 .help("Abre Ajustes → Almacenamiento (lo decides tú)")
             Button("Almacenamiento") { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.settings.Storage")!) }
                 .help("Abre Ajustes → Almacenamiento")
+        case _ where e == "industrial" || e.hasPrefix("ind-"):
+            Button("Catálogo de apps") { c.elemento = nil; c.verFabrica = true }.help("Todas tus apps de Mac e iOS: descripción, ubicación y utilidad (⇧⌘I)")
+            Button("Pizarra del agente") { c.seleccionar("fabrica") }.help("Pizarra del agente Fábrica de Ensamblaje")
+            Button("Informe") { NSWorkspace.shared.open(URL(fileURLWithPath: NSHomeDirectory() + "/Documents/Villa de Agentes/Informe Fábrica de apps.md")) }
+                .help("Abre el informe de la Fábrica en Documentos › Villa de Agentes")
+            if e != "industrial" { Button("Ver la isla") { c.elemento = nil; c.irBarrio("industrial") }.help("Vuela sobre toda la Villa Industrial") }
         case _ where e == "energia" || e.hasPrefix("ener-"):
             let id = ["ener-nuclear": "ener", "ener-hidro": "ener", "ener-solar": "ener", "ener-geo": "ener", "ener-eolica": "isp", "ener-isp": "isp",
                       "ener-clima": "clima", "ener-residuos": "basura", "ener-astro": "astro", "ener-agua": "agua"][e]
@@ -207,6 +213,27 @@ struct TarjetaElemento: View {
             return Reporte(icono: "truck.box.fill", color: .orange, titulo: "Camión Villa Express",
                            quien: "Repartidor · Centro comercial",
                            texto: "Traigo mercadería al Centro comercial desde tierra firme y desde el puerto, y descargo en el andén. Caja del mall: \(caja).")
+        case _ where e == "industrial" || e.hasPrefix("ind-"):
+            let f = almacen.resultados["fabrica"]
+            let total = f?.resumen ?? "catálogo aún sin inventario: el agente Fábrica de Ensamblaje no ha corrido"
+            let ultima = f?.detalle?.first { $0.hasPrefix("Última salida") } ?? ""
+            switch e {
+            case "ind-fabrica", "ind-linea", "ind-despacho":
+                return Reporte(icono: "shippingbox.fill", color: .orange, titulo: "Fábrica de Ensamblaje", quien: "Jefa de planta · línea de despacho",
+                               texto: "Cada caja que sale por la línea es una de tus apps. \(total). \(ultima). Abre el catálogo para ver la descripción, ubicación y utilidad de cada una.")
+            case "ind-camion":
+                return Reporte(icono: "truck.box.fill", color: .orange, titulo: "Camión de carga", quien: "Conductor · Villa Industrial",
+                               texto: "Llevo los productos de la fábrica a la bodega de distribución y al muelle. Hoy en catálogo: \(total).")
+            case "ind-servicios":
+                return Reporte(icono: "building.2.fill", color: .orange, titulo: "Servicios del parque industrial", quien: "Administración del parque",
+                               texto: "Subestación eléctrica alimentada desde la Isla de Energía, estación de combustible, brigada de bomberos, taller mecánico, estanques, planta de RILes, bodega de distribución, torre de agua, patio de contenedores, silos, punto limpio, laboratorio de control de calidad y casino de trabajadores.")
+            case "ind-administracion":
+                return Reporte(icono: "person.text.rectangle.fill", color: .orange, titulo: "Administración de la Villa Industrial", quien: "Gerencia de la fábrica",
+                               texto: "\(total). Las fichas, el informe y el catálogo los mantiene al día el agente Fábrica de Ensamblaje: detecta solo cada app nueva que instalas.")
+            default:
+                return Reporte(icono: "gearshape.2.fill", color: .orange, titulo: "Villa Industrial", quien: "Control de acceso · puente desde la Isla de Energía",
+                               texto: "Parque industrial con la Fábrica de Ensamblaje de tus apps. \(total). Se llega por el puente que sale de la circunvalación de la Isla de Energía (metro: estación Isla de Energía).")
+            }
         case _ where e == "energia" || e.hasPrefix("ener-"):
             func res(_ id: String) -> Resultado? { almacen.resultados[id] }
             func v(_ id: String, _ k: String) -> Double { res(id)?.serie?[k] ?? 0 }

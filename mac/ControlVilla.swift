@@ -26,6 +26,11 @@ final class ControlVilla: ObservableObject {
     @Published var elemento: String?        // helicóptero, garita, guardia, vehículo… con su reporte
     @Published var verAudiencia = false     // conversación con IA en el despacho
     @Published var verCentro = false        // Centro de mando: salud, recursos, seguridad y alarma
+    @Published var verFabrica = false       // Catálogo de la Fábrica de Ensamblaje (Villa Industrial): todas las apps
+    @Published var lupa = false             // Lupa de aumento que sigue al cursor sobre la villa 3D
+    @Published var congelada = false        // Imagen fija para capturas: sin animación y sin cartel encima
+    /// Aumento de la lupa (⌥ + rueda o trackpad para cambiarlo); se recuerda entre sesiones.
+    @Published var aumentoLupa = (UserDefaults.standard.object(forKey: "aumentoLupa") as? CGFloat) ?? 4 { didSet { UserDefaults.standard.set(aumentoLupa, forKey: "aumentoLupa") } }
     @Published var centroCompleto = false   // Centro de mando desplegado a toda la altura de la ventana
     /// Plano de la villa: aparece solo abajo a la izquierda y se pliega a una pestaña (se recuerda entre sesiones).
     @Published var verPlano = (UserDefaults.standard.object(forKey: "verPlano") as? Bool) ?? true { didSet { UserDefaults.standard.set(verPlano, forKey: "verPlano") } }
@@ -68,6 +73,7 @@ final class ControlVilla: ObservableObject {
     }
 
     func alternarPausa() { pausada.toggle(); dormida = false; coord?.tocado(); coord?.ajustarRitmo() }
+    func alternarCongelar() { congelada.toggle(); coord?.ajustarRitmo() }
     func despertar() { guard dormida else { return }; dormida = false; coord?.ajustarRitmo() }
 
     func mostrarElemento(_ e: String) { pizarra = nil; directorio = nil; almacen?.seleccion = nil; elemento = e }
@@ -107,7 +113,7 @@ final class ControlVilla: ObservableObject {
         detenerRecorrido(); verSede = false; dentro = nil
         // La tarjeta abierta corresponde al lugar al que se va (antes quedaba la del último elemento, p. ej. el portaaviones)
         let tarjeta: [String: String] = ["fach": "fach", "armada": "armada", "ejercito": "ejercito", "comisaria": "comisaria", "gobmar": "gobmar",
-                                         "defensa": "ministerio", "aeropuerto": "aeropuerto", "energia": "energia"]
+                                         "defensa": "ministerio", "aeropuerto": "aeropuerto", "energia": "energia", "industrial": "industrial"]
         if let t = tarjeta[zid] { mostrarElemento(t) } else { elemento = nil }
         coord?.irBarrio(zid)
     }
@@ -219,6 +225,13 @@ struct MandoVilla: View {
                     if c.verSede { PanelSede().transition(.move(edge: .leading).combined(with: .opacity)) }
                     if c.verMetro { PanelMetro().transition(.move(edge: .leading).combined(with: .opacity)) }
                 }
+                if c.verFabrica && !c.verCentro {
+                    PanelFabrica()
+                        .frame(maxHeight: .infinity)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+                        .padding(.trailing, 40)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
                 if c.verCentro {
                     VStack(spacing: 0) {
                         // Barra propia con botón Cerrar, siempre visible (no queda bajo los controles de cámara ni la alarma)
@@ -264,7 +277,7 @@ struct MandoVilla: View {
             if c.verAudiencia { PanelAudiencia().padding(.horizontal, 14).padding(.bottom, 34).transition(.move(edge: .bottom).combined(with: .opacity)) }
         }
         .overlay {
-            if c.pausada || c.dormida {
+            if (c.pausada || c.dormida) && !c.congelada {
                 Button { c.pausada ? c.alternarPausa() : c.coord?.tocado() } label: {
                     Label(c.pausada ? "Villa en pausa · clic para reanudar" : "En reposo para ahorrar energía · clic para continuar", systemImage: "pause.circle.fill")
                         .font(.headline).padding(.horizontal, 18).padding(.vertical, 10)
@@ -297,6 +310,7 @@ struct MandoVilla: View {
         }
         .animation(.easeOut(duration: 0.2), value: c.elemento)
         .animation(.easeOut(duration: 0.2), value: c.verCentro)
+        .animation(.easeOut(duration: 0.2), value: c.verFabrica)
         .animation(.easeOut(duration: 0.2), value: c.verAudiencia)
         .animation(.easeOut(duration: 0.2), value: c.verAgentes)
         .animation(.easeOut(duration: 0.2), value: c.verSede)
@@ -313,6 +327,10 @@ struct MandoVilla: View {
                   "Salud de todos los agentes, recursos del Mac, seguridad, alarma y accesos a seguridad, Optimizador y almacenamiento") {
                 c.verCentro.toggle(); if c.verCentro { c.verAgentes = false; c.verSede = false; alarma.reconocer() }
             }
+            boton(c.verFabrica ? "Cerrar catálogo" : "Fábrica", "shippingbox.fill", c.verFabrica,
+                  "Catálogo de la Fábrica de Ensamblaje (Villa Industrial): todas tus apps de Mac e iOS con descripción, ubicación y utilidad (⇧⌘I)") {
+                c.verFabrica.toggle(); if c.verFabrica { c.verCentro = false; c.verAgentes = false; c.verSede = false }
+            }
             boton(c.verAgentes ? "Ocultar agentes" : "Agentes", "person.3", c.verAgentes, "Lista de agentes y barrios: clic para ir a cada uno") {
                 c.verAgentes.toggle(); if c.verAgentes { c.verSede = false }
             }
@@ -322,10 +340,14 @@ struct MandoVilla: View {
             boton(c.recorrido ? "Detener" : "Recorrido", c.recorrido ? "stop.fill" : "play.fill", c.recorrido, "Visita uno a uno a los agentes, primero los que necesitan atención") { c.alternarRecorrido() }
             boton("Vista general", "scope", false, "Vuelve a ver toda la villa (⌘0)") { c.general() }
             boton(c.verPlano ? "Ocultar plano" : "Plano", "map", c.verPlano, "Plano de la villa (abajo a la izquierda): clic en un lugar para ir directo") { c.verPlano.toggle(); if c.verPlano { c.planoAbierto = true } }
+            boton(c.lupa ? "Quitar lupa" : "Lupa", "magnifyingglass.circle", c.lupa,
+                  "Lupa de aumento: agranda la parte de la villa por la que pasa el cursor. ⌥ + rueda cambia el aumento (1,5× a 12×) (⌘L)") { c.lupa.toggle() }
             boton(c.pantallaCompleta ? "Salir de pantalla completa" : "Pantalla completa", c.pantallaCompleta ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
                   c.pantallaCompleta, "Muestra la villa en toda la pantalla, sin barra lateral (⌃⌘F). Esc o este botón para volver") { c.alternarPantallaCompleta() }
             boton(c.pausada ? "Reanudar" : "Pausar", c.pausada ? "play.circle" : "pause.circle", c.pausada,
                   "Pausar detiene la animación 3D para ahorrar batería y CPU (los datos y avisos siguen al día)") { c.alternarPausa() }
+            boton(c.congelada ? "Descongelar" : "Congelar", c.congelada ? "camera.fill" : "camera.viewfinder", c.congelada,
+                  "Congela la imagen de la villa (todo queda quieto, sin carteles encima) para que tomes la captura completa o de una porción con la app que prefieras; otro clic la reanuda (⇧⌘P)") { c.alternarCongelar() }
             boton("◐ " + c.nombreTema, "circle.lefthalf.filled", false, "Automático sigue la hora del Mac; Claro fuerza el día; Oscuro fuerza la noche") { c.cambiarTema() }
             boton(c.revisando ? "Revisando…" : "Reiniciar", "arrow.clockwise", false, "Revisa el estado real de los agentes y los devuelve a su escritorio") { c.reiniciar() }
                 .disabled(c.revisando)

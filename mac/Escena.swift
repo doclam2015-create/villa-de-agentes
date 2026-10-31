@@ -20,7 +20,7 @@ let iconoBarrio: [String: String] = ["urg": "cross.case.fill", "cer": "brain.hea
                                      "puerto": "ferry.fill", "mall": "bag.fill",
                                      "trade": "building.2.fill", "banco": "banknote.fill", "casino": "suit.spade.fill", "museo": "building.columns.circle.fill",
                                      "uni": "graduationcap.fill", "ciencia": "atom", "aeropuerto": "airplane",
-                                     "fach": "airplane.circle.fill", "armada": "ferry.fill", "ejercito": "shield.lefthalf.filled", "defensa": "shield.checkered", "comisaria": "light.beacon.max.fill", "gobmar": "water.waves", "energia": "bolt.fill"]
+                                     "fach": "airplane.circle.fill", "armada": "ferry.fill", "ejercito": "shield.lefthalf.filled", "defensa": "shield.checkered", "comisaria": "light.beacon.max.fill", "gobmar": "water.waves", "energia": "bolt.fill", "industrial": "gearshape.2.fill"]
 
 func etiqueta(_ texto: String, y: Double, grande: Bool, icono: String? = nil, color: NSColor = .systemBlue) -> SCNNode {
     let fuente = NSFont.systemFont(ofSize: grande ? 44 : 30, weight: .semibold)

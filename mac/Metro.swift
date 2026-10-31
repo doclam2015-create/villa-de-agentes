@@ -25,7 +25,7 @@ final class MetroVilla {
         ("regimiento", "REGIMIENTO", 47, true, "el puente al Regimiento del Ejército"),
         ("mall", "MALL SILICON", 84, false, "la entrada poniente del Mall Silicon y su estacionamiento público"),
         ("cerebro", "SEGUNDO CEREBRO", 122, false, "Segundo cerebro y La nube"),
-        ("energia", "ISLA DE ENERGÍA", 149, false, "el puente a la Isla de Energía (centrales, agua potable, meteorología, red, residuos y observatorio) y las Cocheras del metro"),
+        ("energia", "ISLA DE ENERGÍA", 149, false, "el puente a la Isla de Energía (centrales, agua potable, meteorología, red, residuos y observatorio), por un segundo puente la Villa Industrial (Fábrica de Ensamblaje) y las Cocheras del metro"),
         ("caleta", "CALETA · MARINA", 205, false, "el puente a la Caleta de pescadores y la Marina"),
         ("balneario", "BALNEARIO", 235, false, "el Balneario Villa y su playa"),
         ("trade", "VILLA TRADE", 265, true, "el puente a la isla Distrito (Villa Trade Center, Banco, Casino, Centro científico y Museo) y, por un segundo puente, a la Ciudad Universitaria"),
